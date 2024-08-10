@@ -87,24 +87,6 @@ def get_cat_5_answer(model_prediction, answer_key):
     else:
         return model_prediction
 
-
-# def parse_args():
-
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument('--out-dir', required=True, type=str)
-#     parser.add_argument('--model', required=True, type=str)
-#     parser.add_argument('--data-dir', type=str, required=True)
-#     parser.add_argument('--use-rag', action="store_true")
-#     parser.add_argument('--batch-size', default=1, type=int)
-#     parser.add_argument('--rag-mode', type=str, default="")
-#     parser.add_argument('--prompt-dir', type=str, default="")
-#     parser.add_argument('--emb-dir', type=str, default="")
-#     parser.add_argument('--top-k', type=int, default=5)
-#     parser.add_argument('--retriever', type=str, default="contriever")
-#     parser.add_argument('--overwrite', action="store_true")
-#     args = parser.parse_args()
-#     return args
-
 def get_input_context(data, num_question_tokens, model, args):
 
     query_conv = ''
@@ -285,62 +267,4 @@ def get_gemini_answers(model, in_data, out_data, prediction_key, args):
                             out_data['qa'][idx][prediction_key] = json.loads(answer.strip().replace('(a)', '').replace('(b)', '').split('\n')[k])[0]
 
     return out_data
-
-
-# def main():
-
-#     # get arguments
-#     args = parse_args()
-
-#     print("******************  Evaluating Model %s ***************" % args.model)
-
-#     # set openai API key
-#     set_gemini_key()
-
-#     if args.model == "gemini-pro-1.0":
-#         model_name = "models/gemini-1.0-pro-latest"
-
-#     model = genai.GenerativeModel(model_name)
-
-#     # output directory
-#     if not os.path.exists(args.out_dir):
-#         os.makedirs(args.out_dir)
-
-#     # data_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if f.endswith('.json') if '26' in f] # fix for other files
-#     # data_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if 'Chat_8' in f] # fix for other files
-#     # data_files = [os.path.join(args.data_dir, f) for f in ['43_post_qa_post_clean_adv.json', '42_post_qa_post_clean_adv.json']]
-#     # data_files = [os.path.join(args.data_dir, f) for f in ['42_post_qa_post_clean_adv.json',
-#     #                                                     '43_post_qa_post_clean_adv_new.json', 
-#     #                                                     '44_post_qa_post_clean_adv_new.json',
-#     #                                                     '47_post_qa_post_clean_adv_new.json',
-#     #                                                     '48_post_qa_post_clean_adv_new.json',
-#     #                                                     '49_post_qa_post_clean_adv_new.json',
-#     #                                                     '50_post_qa_post_clean_adv_new.json']]
-    
-#     data_files = [os.path.join(args.data_dir, f) for f in ['41_post_qa_post_clean_adv.json']]
-
-
-#     prediction_key = "%s_prediction" % args.model if not args.use_rag else "%s_%s_top_%s_prediction" % (args.model, args.rag_mode, args.top_k)
-
-#     ems = []
-#     total = 0
-#     for f in data_files:
-#         get_answers(model, f, os.path.join(args.out_dir, os.path.split(f)[-1]), args)
-#         exact_matches, lengths, recall = eval_question_answering(os.path.join(args.out_dir, os.path.split(f)[-1]), prediction_key)
-#         ems.extend(exact_matches)
-#         save_eval(os.path.join(args.out_dir, os.path.split(f)[-1]), exact_matches, "%s_f1" % args.model if not args.use_rag else "%s_%s_top_%s_f1" % (args.model, args.rag_mode, args.top_k), recall)
-#         analyze_acc(os.path.join(args.out_dir, os.path.split(f)[-1]).replace('.json', '_scores.json'), 
-#                     os.path.join(args.out_dir, os.path.split(f)[-1]).replace('.json', '_score_stats.json'),
-#                     args.model if not args.use_rag else "%s_%s_top_%s" % (args.model, args.rag_mode, args.top_k),
-#                     "%s_f1" % args.model if not args.use_rag else "%s_%s_top_%s_f1" % (args.model, args.rag_mode, args.top_k), rag=args.use_rag)
-#         # encoder=tiktoken.encoding_for_model(args.model))
-    
-#     print("Exact Match Acc.: ", sum(ems)/len(ems))
-    
-#     # get_chatgpt_answers('./data/multimodal_dialog/completed_annotations/3.json', 
-#     #                     './data/multimodal_dialog/completed_annotations/3_out_gpt4_summary.json', 
-#     #                     summary=True, model='gpt4')
-
-
-# main()
 
