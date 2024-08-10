@@ -9,10 +9,9 @@ import google.generativeai as genai
 from anthropic import Anthropic
 
 
-def get_embedding(texts, model="text-embedding-ada-002"):
+def get_openai_embedding(texts, model="text-embedding-ada-002"):
    texts = [text.replace("\n", " ") for text in texts]
    return np.array([openai.Embedding.create(input = texts, model=model)['data'][i]['embedding'] for i in range(len(texts))])
-
 
 def set_anthropic_key():
     pass

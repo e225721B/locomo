@@ -94,12 +94,14 @@ def get_session_facts(args, agent_a, agent_b, session_idx, return_embeddings=Tru
     conversation = ""
     conversation += agent_a['session_%s_date_time' % session_idx] + '\n'
     for i, dialog in enumerate(agent_a['session_%s' % session_idx]):
-        # if 'clean_text' in dialog:
-        #     writer.write(dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"\n')
-        # else:
-        conversation += "[%s] " % dialog["dia_id"] + dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"\n'
-        # TODO: add image support
-        # conversation += dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"\n'
+        try:
+            conversation += "[%s] " % dialog["dia_id"] + dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"'
+        except KeyError:
+            conversation += "[%s] " % dialog["dia_id"] + dialog['speaker'] + ' said, \"' + dialog['text'] + '\"'
+
+        if 'blip_caption' in dialog:
+            conversation += ' and shared ' + dialog['blip_caption']
+        conversation += '\n'
     
     # print(conversation)
     

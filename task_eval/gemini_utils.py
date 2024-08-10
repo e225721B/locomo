@@ -2,21 +2,11 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pickle
 import random
 import os, json
 from tqdm import tqdm
 import time
-import argparse
-from global_methods import run_gemini, set_gemini_key
-from task_eval.dpr_qa import get_embeddings
-from task_eval.evaluation import eval_question_answering
-from task_eval.evaluation_stats import analyze_acc
-from generative_agents.memory_utils import get_session_facts
-import google.generativeai as genai
-
-from scipy.spatial import distance
-import numpy as np
+from global_methods import run_gemini
 
 
 MAX_LENGTH={'gemini-pro-1.0': 1000000}
@@ -98,63 +88,40 @@ def get_cat_5_answer(model_prediction, answer_key):
         return model_prediction
 
 
-def save_eval(data_file, accs, key, recall_accs=None):
+# def parse_args():
 
-    data = json.load(open(data_file))
-    assert len(data['qa']) == len(accs), (len(data['qa']), len(accs), accs)
-    if len(recall_accs) > 0:
-        assert len(data['qa']) == len(recall_accs)
-    if os.path.exists(data_file.replace('.json', '_scores.json')):
-        data = json.load(open(data_file.replace('.json', '_scores.json')))
-    for i in range(0, len(data['qa'])):
-        data['qa'][i][key] = accs[i]
-        if len(recall_accs) > 0:
-            data['qa'][i][key + '_recall'] = recall_accs[i]
-    with open(data_file.replace('.json', '_scores.json'), 'w') as f:
-        json.dump(data, f, indent=2)
-
-
-def parse_args():
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--out-dir', required=True, type=str)
-    parser.add_argument('--model', required=True, type=str)
-    parser.add_argument('--data-dir', type=str, required=True)
-    parser.add_argument('--use-rag', action="store_true")
-    parser.add_argument('--batch-size', default=1, type=int)
-    parser.add_argument('--rag-mode', type=str, default="")
-    parser.add_argument('--prompt-dir', type=str, default="")
-    parser.add_argument('--emb-dir', type=str, default="")
-    parser.add_argument('--top-k', type=int, default=5)
-    parser.add_argument('--retriever', type=str, default="contriever")
-    parser.add_argument('--overwrite', action="store_true")
-    args = parser.parse_args()
-    return args
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument('--out-dir', required=True, type=str)
+#     parser.add_argument('--model', required=True, type=str)
+#     parser.add_argument('--data-dir', type=str, required=True)
+#     parser.add_argument('--use-rag', action="store_true")
+#     parser.add_argument('--batch-size', default=1, type=int)
+#     parser.add_argument('--rag-mode', type=str, default="")
+#     parser.add_argument('--prompt-dir', type=str, default="")
+#     parser.add_argument('--emb-dir', type=str, default="")
+#     parser.add_argument('--top-k', type=int, default=5)
+#     parser.add_argument('--retriever', type=str, default="contriever")
+#     parser.add_argument('--overwrite', action="store_true")
+#     args = parser.parse_args()
+#     return args
 
 def get_input_context(data, num_question_tokens, model, args):
 
     query_conv = ''
     min_session = -1
     stop = False
-    max_session = [i for i in range(1, 50) if 'session_%s' % i in data and data['session_%s' % i] != []][-1]
-    for i in range(max_session, 0, -1):
+    session_nums = [int(k.split('_')[-1]) for k in data.keys() if 'session' in k and 'date_time' not in k]
+    for i in range(min(session_nums), max(session_nums) + 1):
         if 'session_%s' % i in data:
             query_conv += "\n\n"
             for dialog in data['session_%s' % i][::-1]:
                 turn = ''
-                # conv = conv + dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"' + '\n'
-                try:
-                    turn = dialog['speaker'] + ' said, \"' + dialog['compressed_text'] + '\"' 
-                    # conv = conv + dialog['speaker'] + ': ' + dialog['compressed_text'] + '\n'
-                except KeyError:
-                    turn = dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"' 
-                    # conv = conv + dialog['speaker'] + ': ' + dialog['clean_text'] + '\n'
-                if "img_file" in dialog and len(dialog["img_file"]) > 0 and dialog["blip_caption"] != "":
-                    turn += ' [shares %s]' % dialog["blip_caption"]
+                turn = dialog['speaker'] + ' said, \"' + dialog['text'] + '\"' + '\n'
+                if "blip_caption" in dialog:
+                    turn += ' and shared %s.' % dialog["blip_caption"]
                 turn += '\n'
         
                 # num_tokens = model.count_tokens('DATE: ' + data['session_%s_date_time' % i] + '\n' + 'CONVERSATION:\n' + turn).total_tokens
-                num_tokens = 100
 
                 # if (num_tokens + model.count_tokens(query_conv).total_tokens + num_question_tokens) < (MAX_LENGTH[args.model]-(PER_QA_TOKEN_BUDGET*(args.batch_size))): # 20 tokens assigned for answers
                 #     query_conv = turn + query_conv
@@ -177,21 +144,13 @@ def get_input_context(data, num_question_tokens, model, args):
     return query_conv
 
 
-def get_answers(model, ann_file, out_file, args):
+def get_gemini_answers(model, in_data, out_data, prediction_key, args):
 
-
-    in_data = json.load(open(ann_file))
-
-
-    if os.path.exists(out_file):
-        out_data = json.load(open(out_file))
-    else:
-        out_data = in_data.copy()
 
     assert len(in_data['qa']) == len(out_data['qa']), (len(in_data['qa']), len(out_data['qa']))
 
     # start instruction prompt
-    speakers_names = list(set([d['speaker'] for d in in_data['session_1']]))
+    speakers_names = list(set([d['speaker'] for d in in_data['conversation']['session_1']]))
     start_prompt = CONV_START_PROMPT.format(speakers_names[0], speakers_names[1])
     # start_tokens = model.count_tokens(start_prompt).total_tokens
     start_tokens = 100
@@ -201,9 +160,7 @@ def get_answers(model, ann_file, out_file, args):
     else:
         context_database, query_vectors = None, None
 
-    prediction_key = "%s_prediction" % args.model if not args.use_rag else "%s_%s_top_%s_prediction" % (args.model, args.rag_mode, args.top_k)
-
-    for batch_start_idx in range(0, len(in_data['qa']), args.batch_size):
+    for batch_start_idx in tqdm(range(0, len(in_data['qa']), args.batch_size), desc='Generating answers'):
 
         questions = []
         include_idxs = []
@@ -253,7 +210,7 @@ def get_answers(model, ann_file, out_file, args):
             question_prompt =  QA_PROMPT_BATCH + "\n".join(["%s: %s" % (k, q) for k, q in enumerate(questions)])
             num_question_tokens = model.count_tokens(question_prompt).total_tokens
             num_question_tokens = 200
-            query_conv = get_input_context(in_data, num_question_tokens + start_tokens, model, args)
+            query_conv = get_input_context(in_data['conversation'], num_question_tokens + start_tokens, model, args)
             query_conv = start_prompt + query_conv
         
 
@@ -265,16 +222,12 @@ def get_answers(model, ann_file, out_file, args):
         if args.batch_size == 1:
 
             query = query_conv + '\n\n' + QA_PROMPT.format(questions[0]) if len(cat_5_idxs) == 0 else query_conv + '\n\n' + QA_PROMPT_CAT_5.format(questions[0])
-            print('------------------------------------------------------------------------------------')
-            print(query)
-            print('------------------------------------------------------------------------------------')
+
             answer = run_gemini(model, query)
             
             if len(cat_5_idxs) > 0:
                 answer = get_cat_5_answer(answer, cat_5_answers[0])
-            print('------------------------------------------------------------------------------------')
-            print(answer)
-            print('------------------------------------------------------------------------------------')
+
 
             out_data['qa'][include_idxs[0]][prediction_key] = answer.strip()
             if args.use_rag:
@@ -289,12 +242,12 @@ def get_answers(model, ann_file, out_file, args):
             while trials < 5:
                 try:
                     trials += 1
-                    print("Trial %s" % trials)
+                    # print("Trial %s" % trials)
                     # print("Sending query of %s tokens" % model.count_tokens(query).total_tokens)
-                    print("Trying with answer token budget = %s per question" % PER_QA_TOKEN_BUDGET)
+                    # print("Trying with answer token budget = %s per question" % PER_QA_TOKEN_BUDGET)
                     answer = run_gemini(model, query)
                     answer = answer.replace('\\"', "'").replace('json','').replace('`','').strip()
-                    print(answer)
+
                     # try:
                     #     answers = json.loads(answer.strip())
                     # except:
@@ -331,64 +284,63 @@ def get_answers(model, ann_file, out_file, args):
                         else:
                             out_data['qa'][idx][prediction_key] = json.loads(answer.strip().replace('(a)', '').replace('(b)', '').split('\n')[k])[0]
 
-        with open(out_file, 'w') as f:
-            json.dump(out_data, f, indent=2)
+    return out_data
 
 
-def main():
+# def main():
 
-    # get arguments
-    args = parse_args()
+#     # get arguments
+#     args = parse_args()
 
-    print("******************  Evaluating Model %s ***************" % args.model)
+#     print("******************  Evaluating Model %s ***************" % args.model)
 
-    # set openai API key
-    set_gemini_key()
+#     # set openai API key
+#     set_gemini_key()
 
-    if args.model == "gemini-pro-1.0":
-        model_name = "models/gemini-1.0-pro-latest"
+#     if args.model == "gemini-pro-1.0":
+#         model_name = "models/gemini-1.0-pro-latest"
 
-    model = genai.GenerativeModel(model_name)
+#     model = genai.GenerativeModel(model_name)
 
-    # output directory
-    if not os.path.exists(args.out_dir):
-        os.makedirs(args.out_dir)
+#     # output directory
+#     if not os.path.exists(args.out_dir):
+#         os.makedirs(args.out_dir)
 
-    # data_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if f.endswith('.json') if '26' in f] # fix for other files
-    # data_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if 'Chat_8' in f] # fix for other files
-    # data_files = [os.path.join(args.data_dir, f) for f in ['43_post_qa_post_clean_adv.json', '42_post_qa_post_clean_adv.json']]
-    # data_files = [os.path.join(args.data_dir, f) for f in ['42_post_qa_post_clean_adv.json',
-    #                                                     '43_post_qa_post_clean_adv_new.json', 
-    #                                                     '44_post_qa_post_clean_adv_new.json',
-    #                                                     '47_post_qa_post_clean_adv_new.json',
-    #                                                     '48_post_qa_post_clean_adv_new.json',
-    #                                                     '49_post_qa_post_clean_adv_new.json',
-    #                                                     '50_post_qa_post_clean_adv_new.json']]
+#     # data_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if f.endswith('.json') if '26' in f] # fix for other files
+#     # data_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if 'Chat_8' in f] # fix for other files
+#     # data_files = [os.path.join(args.data_dir, f) for f in ['43_post_qa_post_clean_adv.json', '42_post_qa_post_clean_adv.json']]
+#     # data_files = [os.path.join(args.data_dir, f) for f in ['42_post_qa_post_clean_adv.json',
+#     #                                                     '43_post_qa_post_clean_adv_new.json', 
+#     #                                                     '44_post_qa_post_clean_adv_new.json',
+#     #                                                     '47_post_qa_post_clean_adv_new.json',
+#     #                                                     '48_post_qa_post_clean_adv_new.json',
+#     #                                                     '49_post_qa_post_clean_adv_new.json',
+#     #                                                     '50_post_qa_post_clean_adv_new.json']]
     
-    data_files = [os.path.join(args.data_dir, f) for f in ['41_post_qa_post_clean_adv.json']]
+#     data_files = [os.path.join(args.data_dir, f) for f in ['41_post_qa_post_clean_adv.json']]
 
 
-    prediction_key = "%s_prediction" % args.model if not args.use_rag else "%s_%s_top_%s_prediction" % (args.model, args.rag_mode, args.top_k)
+#     prediction_key = "%s_prediction" % args.model if not args.use_rag else "%s_%s_top_%s_prediction" % (args.model, args.rag_mode, args.top_k)
 
-    ems = []
-    total = 0
-    for f in data_files:
-        get_answers(model, f, os.path.join(args.out_dir, os.path.split(f)[-1]), args)
-        exact_matches, lengths, recall = eval_question_answering(os.path.join(args.out_dir, os.path.split(f)[-1]), prediction_key)
-        ems.extend(exact_matches)
-        save_eval(os.path.join(args.out_dir, os.path.split(f)[-1]), exact_matches, "%s_f1" % args.model if not args.use_rag else "%s_%s_top_%s_f1" % (args.model, args.rag_mode, args.top_k), recall)
-        analyze_acc(os.path.join(args.out_dir, os.path.split(f)[-1]).replace('.json', '_scores.json'), 
-                    os.path.join(args.out_dir, os.path.split(f)[-1]).replace('.json', '_score_stats.json'),
-                    args.model if not args.use_rag else "%s_%s_top_%s" % (args.model, args.rag_mode, args.top_k),
-                    "%s_f1" % args.model if not args.use_rag else "%s_%s_top_%s_f1" % (args.model, args.rag_mode, args.top_k), rag=args.use_rag)
-        # encoder=tiktoken.encoding_for_model(args.model))
+#     ems = []
+#     total = 0
+#     for f in data_files:
+#         get_answers(model, f, os.path.join(args.out_dir, os.path.split(f)[-1]), args)
+#         exact_matches, lengths, recall = eval_question_answering(os.path.join(args.out_dir, os.path.split(f)[-1]), prediction_key)
+#         ems.extend(exact_matches)
+#         save_eval(os.path.join(args.out_dir, os.path.split(f)[-1]), exact_matches, "%s_f1" % args.model if not args.use_rag else "%s_%s_top_%s_f1" % (args.model, args.rag_mode, args.top_k), recall)
+#         analyze_acc(os.path.join(args.out_dir, os.path.split(f)[-1]).replace('.json', '_scores.json'), 
+#                     os.path.join(args.out_dir, os.path.split(f)[-1]).replace('.json', '_score_stats.json'),
+#                     args.model if not args.use_rag else "%s_%s_top_%s" % (args.model, args.rag_mode, args.top_k),
+#                     "%s_f1" % args.model if not args.use_rag else "%s_%s_top_%s_f1" % (args.model, args.rag_mode, args.top_k), rag=args.use_rag)
+#         # encoder=tiktoken.encoding_for_model(args.model))
     
-    print("Exact Match Acc.: ", sum(ems)/len(ems))
+#     print("Exact Match Acc.: ", sum(ems)/len(ems))
     
-    # get_chatgpt_answers('./data/multimodal_dialog/completed_annotations/3.json', 
-    #                     './data/multimodal_dialog/completed_annotations/3_out_gpt4_summary.json', 
-    #                     summary=True, model='gpt4')
+#     # get_chatgpt_answers('./data/multimodal_dialog/completed_annotations/3.json', 
+#     #                     './data/multimodal_dialog/completed_annotations/3_out_gpt4_summary.json', 
+#     #                     summary=True, model='gpt4')
 
 
-main()
+# main()
 

@@ -5,6 +5,7 @@ import unicodedata
 from typing import List
 import numpy as np
 from collections import Counter
+import os
 from bert_score import score
 from nltk.stem import PorterStemmer
 ps = PorterStemmer()
@@ -185,17 +186,15 @@ def eval_recall(infile):
     return recall, lens
 
 
-def eval_question_answering(infile, eval_key='prediction', metric='f1'):
+def eval_question_answering(qas, eval_key='prediction', metric='f1'):
 
-    # lines = open(infile, 'r').readlines()[1:]
-    lines = json.load(open(infile, 'r'))['qa']
 
     all_ems = []
     all_recall = []
     exact_match_count = 0
     f1_count = 0
     answer_lengths = []
-    for i, line in enumerate(lines):
+    for i, line in enumerate(qas):
         # line = json.loads(line)
         if type(line[eval_key]) == list:
             answer = line['answer']
@@ -205,32 +204,21 @@ def eval_question_answering(infile, eval_key='prediction', metric='f1'):
             answer = answer.split(';')[0].strip()
         
         output = line[eval_key]
-
-        if "metric" in line and line["metric"] == "bertscore":
-            # print(answer, output)
-            all_ems.append(bert_score(output, answer))
-            answer_lengths.append(len(output.split()))
         
-        elif line['category'] in [2, 3, 4]:
-            # print(answer, output)
+        # single-hop, temporal, open-domain eval without splitting for sub-answers 
+        if line['category'] in [2, 3, 4]:
             all_ems.append(f1_score(output, answer))
-            # all_ems.append(rougel_score(output, answer))
-            # all_ems.append(bert_score(output, answer))
         
+        # multi-hop eval by splitting entire phrase into sub-answers and computing partial F1 for each
         elif line['category'] in [1]:
-            # all_ems.append(bert_score(output, answer))
             all_ems.append(f1(output, answer))
-            # all_ems.append(rougel_score(output, answer))
-            answer_lengths.append(len(output.split()))
 
+        # adversarial eval --> check for selection of correct option
         elif line['category'] in [5]:
-            # all_ems.append(1-rougel_score(output, answer))
             if 'no information available' in output.lower() or 'not mentioned' in output.lower():
                 all_ems.append(1)
             else:
                 all_ems.append(0)
-                # all_ems.append(1-f1_score(output, answer))
-
         else:
             print(line)
             raise ValueError
@@ -248,8 +236,8 @@ def eval_question_answering(infile, eval_key='prediction', metric='f1'):
         else:
             all_recall.append(1)
 
-    print("{} QA samples evaluated; {} accuracy values".format(len(lines), len(all_ems)))
-    lens = round(np.mean(answer_lengths), 4)
+    print("{} QA samples evaluated; {} accuracy values".format(len(qas), len(all_ems)))
+    lens = 0.0
     return all_ems, lens, all_recall
 
 
@@ -302,3 +290,4 @@ def eval_dialogue_system(infile):
     lens = round(np.mean(answer_lengths), 4)
 
     return F1, RL, lens
+
