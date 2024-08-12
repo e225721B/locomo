@@ -38,6 +38,7 @@ def run_json_trials(query, num_gen=1, num_tokens_request=1000,
             else:
                 output = run_chatgpt(query, num_gen=num_gen, wait_time=wait_time, model=model,
                                                    num_tokens_request=num_tokens_request, use_16k=use_16k, temperature=temperature)
+            output = output.replace('json', '') # this frequently happens
             facts = json.loads(output.strip())
             run_loop = False
         except json.decoder.JSONDecodeError:
@@ -89,22 +90,22 @@ def run_gemini(model, content: str, max_tokens: int = 0):
 
 
 def run_chatgpt(query, num_gen=1, num_tokens_request=1000, 
-                model='davinci', use_16k=False, temperature=1.0, wait_time=1):
+                model='chatgpt', use_16k=False, temperature=1.0, wait_time=1):
 
     completion = None
     while completion is None:
         wait_time = wait_time * 2
         try:
-            if model == 'davinci':
-                completion = openai.Completion.create(
-                                # model = "gpt-3.5-turbo",
-                                model = "text-davinci-003",
-                                temperature = temperature,
-                                max_tokens = num_tokens_request,
-                                n=num_gen,
-                                prompt=query
-                            )
-            elif model == 'chatgpt':
+            # if model == 'davinci':
+            #     completion = openai.Completion.create(
+            #                     # model = "gpt-3.5-turbo",
+            #                     model = "text-davinci-003",
+            #                     temperature = temperature,
+            #                     max_tokens = num_tokens_request,
+            #                     n=num_gen,
+            #                     prompt=query
+            #                 )
+            if model == 'chatgpt':
                 messages = [
                         {"role": "system", "content": query}
                     ]

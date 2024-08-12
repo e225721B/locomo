@@ -1,5 +1,5 @@
 {
-    "prompt": "Rewrite the DIALOG according to the following rules:\n- If some words or information from DIALOG are already present in CONTEXT, remove or replace with indirect references like 'that', 'it' etc. \n- Replace references to objects mentioned in CAPTION using indirect references like 'this', 'that' etc.\n- Remove repetitions of questions already asked in CONTEXT",
+    "prompt": "Rewrite the DIALOG according to the following rules:\n1. If some words or information in DIALOG can be inferred from CONTEXT, remove or replace those words in DIALOG with indirect references like 'that', 'it' etc. \n2. Replace references to objects mentioned in CAPTION using indirect references like 'this', 'that' etc.\n- Remove repetitions of questions already asked in CONTEXT",
     "input_format": "CONTEXT: {}\n\nDIALOG: {}\n\nOUTPUT: ",
     "input_format_w_image": "CONTEXT: {}\n\nDIALOG: {}\n\nCAPTION: {}\n\nOUTPUT: ",
     "examples": [

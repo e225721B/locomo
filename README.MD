@@ -30,7 +30,27 @@ The dataset can be found in the ```./data/locomo10.json``` file in this reposito
 
 Configuration variables like API keys, output directories etc. are set in `scripts/env.sh` and run at the beginning of all other scripts.
 
-### 1. Evaluate open-source and closed-source LLMs on the Question Answering Task with the (truncated) conversation as context
+### Generate *very* long-term conversations between two LLM-agents with pre-assigned personalities using our LLM-based generative framework
+The code to generate conversations is available in `scripts/generate_conversations.sh` and be run as follows:
+```
+bash scripts/generate_conversations.sh
+```
+
+This code can be run under two settings:
+1. Generate conversations between agents assigned with custom personas. To enable this setting, point `--out-dir` to a directory containing the files `agent_a.json` and `agent_b.json`. These files should contain the `name` and `persona_summary` of the speaker represented by the agent. See an example at `data/multimodal_dialog/example`.
+
+```
+{
+  "name": "Angela",
+  "persona_summary": "Angela is a 31 year old woman who works as the manager of a gift shop in Chapel Hill. She curates interesting pieces from local artists and has maintained a beautiful gallery in the form of the gift shop. She also makes her own art sometimes, in the form of oil paintings."
+}
+```
+
+2. Create personalities using prompts from the MSC dataset. To enable this setting, point `--out-dir` to an empty directory. This will make the script sample a pair of personalities from `data/msc_personas_all.json`.
+
+See `scripts/generate_conversations.py` for details on the various parameters that can be tweaked for generating the conversations.
+
+### Evaluate open-source and closed-source LLMs on the LoCoMo Question Answering Task with the (truncated) conversation as context
 
 * Evaluate OpenAI models
 ```
@@ -52,7 +72,7 @@ bash scripts/evaluate_gemini.sh
 bash scripts/evaluate_hf_llm.sh
 ```
 
-### 2. Generate observations and session summaries from LoCoMo conversations using `gpt-3.5-turbo` for evaluating RAG-based models
+### Generate observations and session summaries from LoCoMo conversations using `gpt-3.5-turbo` for evaluating RAG-based models
 We provide the observations and summaries with our release of the LoCoMo dataset. Follow these instructions to re-generate the same or for a different set of conversations.
 
 * Generate observations from all sessions:
@@ -67,13 +87,13 @@ bash scripts/generate_session_summaries.sh
 **Note 3**: Session-summaries are different from the event summaries of the event summarization task. The former summairze only a single session whereas event summaries are specific to each speaker and contain causal, temporal connections across sessions.
 
 
-### 3. Evaluate retrieval-augmented `gpt-3.5-turbo` on the question-answering task using (a) dialogs, (b) observations and (c) session summaries as databases.
+### Evaluate retrieval-augmented `gpt-3.5-turbo` on the LoCoMo question-answering task using (a) dialogs, (b) observations and (c) session summaries as databases.
 * Evaluate `gpt-3.5-turbo` using retrieval-based augmentation
 ```
 bash scripts/evaluate_rag_gpts.sh
 ```
 
-### 4. Evaluate models on the event summarization task
+### Evaluate models on the event summarization task
 
 Coming soon!
 
@@ -81,9 +101,6 @@ Coming soon!
 
 Coming soon!
 
-### 6. Generate synthetic conversations using our LLM-based agent pipeline
-
-Coming soon!
 
 ### Reference
 Please cite our paper if you use LoCoMo in your works:
