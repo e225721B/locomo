@@ -1,7 +1,7 @@
 # Data and Code for the **ACL 2024** Paper "**Evaluating Very Long-Term Conversational Memory of LLM Agents**"
 **Authors**: [Adyasha Maharana](https://adymaharana.github.io/), [Dong-Ho Lee](https://www.danny-lee.info/), [Sergey Tulyakov](https://stulyakov.com/), [Mohit Bansal](https://www.cs.unc.edu/~mbansal/), [Francesco Barbieri](https://fvancesco.github.io/) and [Yuwei Fang](https://yuwfan.github.io/)
 
-**Paper**: [arXiv](https://arxiv.org/abs/2402.17753)
+**Paper**: [pdf](https://github.com/snap-research/locomo/tree/main/static/paper/locomo.pdf)
 
 ## Data
 
@@ -31,7 +31,7 @@ The dataset can be found in the ```./data/locomo10.json``` file in this reposito
 Configuration variables like API keys, output directories etc. are set in `scripts/env.sh` and run at the beginning of all other scripts.
 
 ### Generate *very* long-term conversations between two LLM-agents with pre-assigned personalities using our LLM-based generative framework
-The code to generate conversations is available in `scripts/generate_conversations.sh` and be run as follows:
+The code to generate conversations is available in `scripts/generate_conversations.sh` and can be run as follows:
 ```
 bash scripts/generate_conversations.sh
 ```
@@ -48,7 +48,7 @@ This code can be run under two settings:
 
 2. Create personalities using prompts from the MSC dataset. To enable this setting, point `--out-dir` to an empty directory. This will make the script sample a pair of personalities from `data/msc_personas_all.json`.
 
-See `scripts/generate_conversations.py` for details on the various parameters that can be tweaked for generating the conversations.
+See `scripts/generate_conversations.py` for details on the various parameters that can be tweaked for generating the conversations. For example, `--num-days` can be changed to specify the temporal span of the conversations.
 
 ### Evaluate open-source and closed-source LLMs on the LoCoMo Question Answering Task with the (truncated) conversation as context
 
