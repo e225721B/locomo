@@ -97,7 +97,7 @@ bash scripts/evaluate_rag_gpts.sh
 
 Coming soon!
 
-### 5. Train and evaluate models on the multimodal dialog generation task
+### Train and evaluate `MiniGPT-5` models on the multimodal dialog generation task
 
 Coming soon!
 
