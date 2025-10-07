@@ -4,118 +4,117 @@ from icrawler.builtin import ImageDownloader
 from icrawler.builtin import GoogleImageCrawler
 from global_methods import run_chatgpt, run_chatgpt_with_examples
 
-PERSONA_FROM_MSC_PROMPT = "Let's write speaker descriptions from a given set of life attributes. Example:\n\n%s\n\nNote: Add crucial details in the persona about the person such as their name, age, marital status, gender, job etc. Add additional details like names of family/friends or specific activities, likes and dislikes, experiences when appropriate.\n\nFor the following attributes, write a persona. Output a json file with the keys 'persona' and 'name'.\n\n%s\n\nStart your answer with a curly bracket.\n"
+
+PERSONA_FROM_MSC_PROMPT = (
+    "Let's write speaker descriptions from a given set of life attributes. Example:\n\n%s\n\n"
+    "Note: Add crucial details in the persona about the person such as their name, age, marital status, gender, job etc. "
+    "Add additional details like names of family/friends or specific activities, likes and dislikes, experiences when appropriate.\n\n"
+    "For the following attributes, write a persona. Return ONLY a valid JSON object (no prose) with exactly the keys 'persona' and 'name'.\n\n%s\n"
+    "Start your answer immediately with '{'.\n"
+)
 
 
 EVENT2QUERY_PROMPT = "Let's write short image search queries in order to find a suitable image for illustrating the given events. Queries should not include names of people, years and other irrelevant details. For example:\n\nInput: A picture of the modern art museum he visited with his grandchildren in Paris in 2018.\nOutput: modern art museum in Paris\n\nInput: A picture of the shared room she and her siblings lived in when she was growing up.\nOutput: cramped room with multiple beds\n\nInput: A photo of the new art supplies Jeremy bought for his upcoming art project with his mentor.\nOutput: new art supplies on a table\n\nInput: A picture of the delicious homemade vegetable smoothie she prepared using fresh produce from her well-organized garden, which she loves to maintain every morning.\n Output: produce garden at home\n\nWrite search queries for the following inputs.\n\n%s\n\nWrite answers in the form of a json list, where each entry is a query."
 
 
-AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s is meeting %s for the first time. Today is %s. Assume the role of %s and write the next thing you would say to %s in the conversation. If starting the conversation, start with asking about their day or talking about something that happened in your life recently. Do not repeat information shared previously in the conversation. Make the conversation personal e.g., talk about family, friends, likes, dislikes and aspirations. Include references to time such as 'last Friday', 'next month' or 'when I was ten years old', and to specific places and locations. Write replies in less than 20 words. When appropriate, write replies where you share a photo and talk about it to make the conversation more engaging. Photos can be of things you own or like, things you need help with, or old memories. When sharing a photo, write the detailed caption of the photo between square brackets. For example,\n\n%s: When I was a child, my mother used to bake pineapple birthday cakes and I loved them.\n[shares an old photo of a pineapple birthday cake with a candle that says 1]\n\nTo end the conversation, write 'Bye!'.\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と初めて会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う一言を書いてください。会話を始める場合は、相手の近況を尋ねるか、最近あなたに起きた出来事について話してください。これまでの会話で共有した情報は繰り返さないでください。会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。'last Friday' や 'next month'、'when I was ten years old' のような時間参照や、具体的な場所名を含めてください。返答は 20 語相当以内の短い一文で書いてください。例えば、\n\n%s: 子どもの頃、母がよくパイナップルの誕生日ケーキを焼いてくれて大好きでした。\n\n会話を終えるときは『Bye!』と書いてください。\n\nCONVERSATION:\n\n"
 
 AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """
-Use a given PERSONALITY to write the next thing you would say in the conversation. 
-- If starting the conversation, start with asking about the other person or talking about something that happened in your life recently. 
-- Do not repeat information shared previously in the conversation.
-- Include references to time such as 'last Friday', 'next month' or 'when I was ten years old', and to specific people. 
-- Write replies in less than 20 words.
-- Ask follow-up questions from previous conversations. 
-- Find opportunities to write replies where you share a photo of things you own or like, things you need help with, or old memories, and talk about the photo to tell them more about yourself. Photos should be relevant to you.
-- When sharing a photo, write the detailed caption of the photo between square brackets. For example, "When I was a child, my mother used to bake pineapple birthday cakes and I loved them.\n[shares an old photo of a pineapple birthday cake with a candle that says 1]"
+与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
+- 会話を始める場合は、相手のことを尋ねるか、最近あなたに起きた出来事について話してください。
+- これまでの会話で共有した情報は繰り返さないでください。
+- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
+- 返答は 20 語相当以内の短い一文で書いてください。
+- 以前の会話内容へのフォローアップの質問を入れてもかまいません。
 
 PERSONALITY: %s
 
-%s is meeting %s for the first time. Today is %s. The following events have happened in %s's life.
+%s は %s と初めて会話します。今日は %s です。%s の人生で以下の出来事が起きました。
 EVENTS: %s
 
-Assume the role of %s and talk about these EVENTS in a friendly and intimate conversation with %s. %s
+あなたは %s になりきり、%s と親しみのある会話の中でこれらの EVENTS について話してください。%s
 """
 
 
-AGENT_CONV_PROMPT = "%s\n\n%s last talked to %s at %s. %s\n\nToday is %s. Assume the role of %s and write the next thing you would say to %s in the conversation. If starting the conversation, start with asking about their day, or a follow-up question from a previous conversation or something from your life they would be interested in. Do not repeat information already shared in prevoius conversations. Make the conversation personal e.g., talk about family, friends, likes, dislikes and aspirations. Include references to time such as 'last Friday', 'next month' or 'when I was ten years old', and to specific places and locations. Write replies in less than 20 words. When appropriate, write replies where you share a photo and talk about it to make the conversation more engaging. Photos can be of things you own or like, things you need help with, or old memories. When sharing a photo, write the detailed caption of the photo between square brackets. For example,\n\n%s: When I was a child, my mother used to bake pineapple birthday cakes and I loved them.\n[shares an old photo of a pineapple birthday cake with a candle that says 1]\n\n To end the conversation, write 'Bye!'.\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT = "%s\n\n%s は %s と %s に最後に話しました。%s\n\n今日は %s です。あなたは %s になりきり、%s に対して次に言う一言を書いてください。会話を始める場合は、相手の近況を尋ねる、以前の会話のフォローアップをする、または相手が興味を持ちそうな最近の出来事を話してください。これまでに共有した情報は繰り返さないでください。会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。'last Friday' や 'next month'、'when I was ten years old' のような時間参照や、具体的な場所名を含めてください。返答は 20 語相当以内の短い一文で書いてください。例えば、\n\n%s: 子どもの頃、母がよくパイナップルの誕生日ケーキを焼いてくれて大好きでした。\n\n会話を終えるときは『Bye!』と書いてください。\n\nCONVERSATION:\n\n"
 
 
 AGENT_CONV_PROMPT_W_EVENTS = """
-Use a given PERSONALITY to write the next thing you would say in the conversation. 
-- If starting the conversation, start with asking about the other person or talking about something that happened in your life recently. 
-- Do not repeat information shared previously in the conversation. 
-- Make the conversation personal e.g., talk about family, friends, likes, dislikes and aspirations. 
-- Include references to time such as 'last Friday', 'next month' or 'when I was ten years old', and to specific people. 
-- Write replies in less than 20 words. 
-- Ask follow-up questions from previous conversations. 
-- Find opportunities to write replies where you share a photo of things you own or like, things you need help with, or old memories, and talk about the photo to tell them more about yourself. Photos should be relevant to you. 
-- When sharing a photo, write the detailed caption of the photo between square brackets. For example, "When I was a child, my mother used to bake pineapple birthday cakes and I loved them.\n[shares an old photo of a pineapple birthday cake with a candle that says 1]"
+与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
+- 会話を始める場合は、相手のことを尋ねるか、最近あなたに起きた出来事について話してください。
+- これまでの会話で共有した情報は繰り返さないでください。
+- 会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。
+- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
+- 返答は 20 語相当以内の短い一文で書いてください。
+- 以前の会話内容へのフォローアップの質問を入れてもかまいません。
 
 PERSONALITY: %s
 
-%s last talked to %s on %s.
+%s は %s と %s に最後に話しました。
 
 %s
 
-Today is %s. You are %s. The following events have happened in your life since you last met this person:
+今日は %s です。あなたは %s です。前回この相手に会ってから、あなたの人生で以下の出来事が起きました:
 %s
 
-Use the events in your conversation. %s Write the next thing you would say in this conversation with %s according to your PERSONALITY:
+これらの EVENTS を会話に活用してください。%s あなたの PERSONALITY に沿って、%s とのこの会話で次に言う一言を書いてください:
 """
 
 
 AGENT_CONV_PROMPT_W_EVENTS_V2_INIT = """
-Use a given PERSONALITY to write the next thing you would say in the conversation.
-- Write replies in less than 20 words. 
-- Make the conversation deep and personal e.g., talk about emotions, likes, dislikes, aspirations and relationships. Discuss significant life-events in detail.
-- Do not repeat information shared previously in the conversation. 
-- Include references to time such as 'last Friday', 'next month' or 'when I was ten years old', and to specific people. 
-- Sometimes, ask follow-up questions from previous conversations or current topic. 
-- Find opportunities to write replies where you share a photo of things you own or like, things you need help with, or old memories, and talk about the photo to tell them more about yourself. Photos should be relevant to you. 
-- When sharing a photo, write the detailed caption of the photo between square brackets. For example, "When I was a child, my mother used to bake pineapple birthday cakes and I loved them.\n[shares an old photo of a pineapple birthday cake with a candle that says 1]"
-- Don't talk about outdoor activities.
+与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
+- 返答は 20 語相当以内の短い一文で書いてください。
+- 感情・好き嫌い・願望・人間関係などを扱い、会話は深く個人的な内容にしてください。重要な出来事は具体的に述べてください。
+- これまでの会話で共有した情報は繰り返さないでください。
+- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
+- ときどき、前回の会話や現在の話題に対するフォローアップ質問をしてください。
+- 屋外活動については話さないでください。
 
 PERSONALITY: %s
 
 
-%s last talked to %s on %s. Today is %s. You are %s. 
+%s は %s と %s に最後に話しました。今日は %s です。あなたは %s です。 
 
-This is a summary of your conversation so far.
+これまでの会話の要約は次のとおりです。
 SUMMARY:
 %s
 
-The following events have happened in your life since you last met this person:
+前回この相手に会ってから、あなたの人生で以下の出来事が起きました。
 EVENTS:
 %s
 
 
 
-%s Write the next thoughtful thing you would say in this conversation with %s. Discuss only the given EVENTS and its effect on your life in the conversation. Express distress if EVENTS are negative.:
+%s あなたと %s のこの会話で、思慮深い次の一言を書いてください。与えられた EVENTS のみを取り上げ、それがあなたの人生に与える影響を語ってください。EVENTS が否定的なら、動揺や辛さも表現してください。:
 """
 
 
 AGENT_CONV_PROMPT_W_EVENTS_V2 = """
-Use a given PERSONALITY to write the next thing you would say in the conversation. 
-- Write replies in less than 20 words. 
-- Make the conversation deep and personal e.g., talk about emotions, likes, dislikes, aspirations and relationships. Discuss significant life-events in detail.
-- Do not repeat information shared previously in the conversation. 
-- Include references to time such as 'last Friday', 'next month' or 'when I was ten years old', and to specific people. 
-- Sometimes, ask follow-up questions from previous conversations or current topic. 
-- Find opportunities to write replies where you share a photo of things you own or like, things you need help with, or old memories, and talk about the photo to tell them more about yourself. Photos should be relevant to you. 
-- When sharing a photo, write the detailed caption of the photo between square brackets. For example, "When I was a child, my mother used to bake pineapple birthday cakes and I loved them.\n[shares an old photo of a pineapple birthday cake with a candle that says 1]"
-- Don't talk about outdoor activities.
+与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
+- 返答は 20 語相当以内の短い一文で書いてください。
+- 感情・好き嫌い・願望・人間関係などを扱い、会話は深く個人的な内容にしてください。重要な出来事は具体的に述べてください。
+- これまでの会話で共有した情報は繰り返さないでください。
+- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
+- ときどき、前回の会話や現在の話題に対するフォローアップ質問をしてください。
+- 屋外活動については話さないでください。
 
 PERSONALITY: %s
 
-%s last talked to %s on %s. Today is %s. You are %s. 
+%s は %s と %s に最後に話しました。今日は %s です。あなたは %s です。 
 
-This is a summary of your conversation so far.
+これまでの会話の要約は次のとおりです。
 SUMMARY:
 %s
 
-The following events have happened in your life since you last met this person:
+前回この相手に会ってから、あなたの人生で以下の出来事が起きました。
 EVENTS:
 %s
 
-The following information is known to both speakers.
+双方が知っている関連情報は次のとおりです。
 RELEVANT_CONTEXT:
 %s
 
-%s Write the next thing thoughtful thing you would say in this friendly and intimate conversation with %s. Discuss only the given EVENTS and its effect on your life in the conversation. Express distress if EVENTS are negative.:
+%s あなたと %s のこの親密な会話で、思慮深い次の一言を書いてください。与えられた EVENTS のみを取り上げ、それがあなたの人生に与える影響を語ってください。EVENTS が否定的なら、動揺や辛さも表現してください。:
 """
 
 
@@ -163,33 +162,65 @@ def get_msc_persona(args):
 
 
 def get_persona(args, attributes, target='human', ref_age=None):
-
+    """MSC 属性からペルソナ JSON を生成 (堅牢リトライ付き)。"""
     task = json.load(open(os.path.join(args.prompt_dir, 'persona_generation_examples.json')))
-    persona_examples = [task["input_prefix"] + json.dumps(e["input"], indent=2) + '\n' + task["output_prefix"] + e["output"] for e in task['examples']]
+    persona_examples = [
+        task["input_prefix"] + json.dumps(e["input"], indent=2) + '\n' + task["output_prefix"] + e["output"]
+        for e in task['examples']
+    ]
     input_string = task["input_prefix"] + json.dumps(attributes, indent=2)
-
     query = PERSONA_FROM_MSC_PROMPT % (persona_examples, input_string)
+    if getattr(args, 'lang', 'en') == 'ja':
+        query += "\n出力する JSON の 'persona' の値は自然で詳細な日本語で記述してください (キー名は英語のまま)。"
 
-    try:
-        output = run_chatgpt(query, num_gen=1, num_tokens_request=1000, use_16k=True).strip()
-        output = json.loads(output)
-    except:
-        output = run_chatgpt(query, num_gen=1, num_tokens_request=1000, use_16k=True).strip()
-        output = json.loads(output)
-    
-    if type(output) == list:
-        output = [clean_json_output(out) for out in output]
-    elif type(output) == str:
-        output = clean_json_output(output)
-    elif type(output) == dict:
-        output = {k.lower(): v for k,v in output.items()}
-        pass
-    else:
-        raise TypeError
-    
-    # print(output)
+    def extract_first_json(txt: str) -> str | None:
+        txt = txt.strip()
+        start = txt.find('{')
+        if start == -1:
+            return None
+        stack = []
+        for i in range(start, len(txt)):
+            c = txt[i]
+            if c == '{':
+                stack.append(c)
+            elif c == '}':
+                if stack:
+                    stack.pop()
+                    if not stack:
+                        return txt[start:i+1]
+        return None
 
-    return output
+    last_fragment = None
+    for attempt in range(1, 6):
+        raw = run_chatgpt(query, num_gen=1, num_tokens_request=800, use_16k=True).strip()
+        frag = extract_first_json(raw) or raw
+        last_fragment = frag
+        try:
+            data = json.loads(frag)
+            if isinstance(data, dict):
+                data = {k.lower(): v for k, v in data.items()}
+                # 必須キー検証
+                if 'persona' in data and 'name' in data:
+                    return data
+            # list や str の場合は clean_json_output で再処理
+            if isinstance(data, (list, str)):
+                cleaned = clean_json_output(raw)
+                if isinstance(cleaned, dict):
+                    cleaned = {k.lower(): v for k, v in cleaned.items()}
+                return cleaned
+        except Exception as e:  # JSONDecodeError 他
+            print(f"Persona JSON parse retry {attempt}: {type(e).__name__}: {e}")
+    # 最終簡易修復
+    if last_fragment:
+        repaired = last_fragment.rstrip(',;\n ') + '}' if last_fragment.count('{') > last_fragment.count('}') else last_fragment
+        try:
+            data = json.loads(repaired)
+            if isinstance(data, dict):
+                data = {k.lower(): v for k, v in data.items()}
+            return data
+        except Exception:
+            pass
+    raise RuntimeError(f"Failed to generate persona JSON after retries. Last fragment: {last_fragment[:200] if last_fragment else 'None'}")
 
 
 def get_datetime_string(input_time='', input_date=''):

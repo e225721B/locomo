@@ -88,6 +88,12 @@ date_time_div = """
             </div>
 """
 
+rel_div = """
+            <div class="message date">
+                <p>%s</p>
+            </div>
+"""
+
 def get_speaker_info(speaker, use_events=False):
 
     output = ""
@@ -148,12 +154,34 @@ def convert_to_chat_html(speaker_1, speaker_2, outfile="", use_events=False, img
         
         body += date_time_div % ("Session %s [ %s ]" % (num, date_time_string))
 
-        if 'events_session_%s' % num in speaker_1 and 'events_session_%s' % num in speaker_2:
-            speaker_1_events = speaker_1['events_session_%s' % num]
-            speaker_2_events = speaker_2['events_session_%s' % num]
+        # Show relationships if available (written on agent_a side)
+        rel = speaker_1.get('session_%s_relationships' % num)
+        if isinstance(rel, dict):
+            # Prefer name-aware block if present
+            by = rel.get('by_speaker')
+            if isinstance(by, dict) and by:
+                lines = []
+                for spk, obj in by.items():
+                    toward = obj.get('toward', '?')
+                    s = obj.get('scores', {})
+                    lines.append(f"{spk} → {toward}: intimacy={s.get('intimacy','-')}, power={s.get('power','-')}, social_distance={s.get('social_distance','-')}, trust={s.get('trust','-')}")
+                body += rel_div % ("<b>Relationships</b><br>" + "<br>".join(lines))
+            else:
+                a2b = rel.get('a_to_b', {})
+                b2a = rel.get('b_to_a', {})
+                text = (
+                    "<b>Relationships</b><br>"
+                    f"A→B: intimacy={a2b.get('intimacy','-')}, power={a2b.get('power','-')}, social_distance={a2b.get('social_distance','-')}, trust={a2b.get('trust','-')}<br>"
+                    f"B→A: intimacy={b2a.get('intimacy','-')}, power={b2a.get('power','-')}, social_distance={b2a.get('social_distance','-')}, trust={b2a.get('trust','-')}"
+                )
+                body += rel_div % text
 
-            body += speaker_1_div % get_session_events(speaker_1_events)
-            body += speaker_2_div % get_session_events(speaker_2_events)
+    # イベントグラフ機能削除に伴いイベント表示を無効化
+    # if 'events_session_%s' % num in speaker_1 and 'events_session_%s' % num in speaker_2:
+    #     speaker_1_events = speaker_1['events_session_%s' % num]
+    #     speaker_2_events = speaker_2['events_session_%s' % num]
+    #     body += speaker_1_div % get_session_events(speaker_1_events)
+    #     body += speaker_2_div % get_session_events(speaker_2_events)
 
         for dialog in speaker_1['session_%s' % num]:
             text = dialog["clean_text"]

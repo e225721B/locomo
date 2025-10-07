@@ -1,7 +1,7 @@
 import os, json
 import time
-import openai
 import logging
+import re
 from datetime import datetime
 from global_methods import run_chatgpt
 import tiktoken
@@ -84,6 +84,58 @@ def sort_events_by_time(graph):
     return graph
 
 
+def _extract_json_list(raw: str):
+    """生テキストから最初の JSON 配列 ( [ ... ] ) を抽出してパース。
+    - 余分な前後テキストやコードフェンス、```json などを除去
+    - 最後の ']' までを取得
+    失敗時は例外を送出
+    """
+    if raw is None:
+        raise ValueError("raw is None")
+    # コードフェンス除去
+    raw = raw.strip()
+    raw = re.sub(r'^```[a-zA-Z0-9]*', '', raw)
+    raw = re.sub(r'```$', '', raw).strip()
+    # 最初の '[' と最後の ']' を探す
+    start = raw.find('[')
+    end = raw.rfind(']')
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("Could not find JSON array brackets in output")
+    snippet = raw[start:end+1]
+    return json.loads(snippet)
+
+
+def _call_and_parse(query: str, max_tokens: int, phase: str, max_attempts: int = 5, delay: float = 1.0):
+    """LLM呼び出し + JSON抽出の再試行ラッパー。
+    Returns: list (parsed JSON)
+    Raises: RuntimeError after exhausting attempts
+    """
+    for attempt in range(1, max_attempts+1):
+        raw = run_chatgpt(query, num_gen=1, num_tokens_request=max_tokens, use_16k=False, temperature=1.0)
+        if raw is None:
+            logging.warning(f"[{phase}] attempt {attempt}: received None response")
+            time.sleep(delay * attempt)
+            continue
+        raw_str = raw.strip() if isinstance(raw, str) else str(raw)
+        logging.debug(f"[{phase}] raw (first 500 chars): {raw_str[:500]}")
+        try:
+            parsed = _extract_json_list(raw_str)
+            return parsed
+        except Exception as e:
+            logging.warning(f"[{phase}] JSON parse fail attempt {attempt}: {e}")
+            # 保存して解析可能に
+            try:
+                fname = f"bad_output_{phase}_{attempt}.txt"
+                with open(fname, 'w') as f:
+                    f.write(raw_str)
+                logging.warning(f"Saved raw output to {fname}")
+            except Exception as ee:
+                logging.warning(f"Could not save raw output: {ee}")
+            time.sleep(delay * attempt)
+            continue
+    raise RuntimeError(f"[{phase}] Failed to obtain valid JSON after {max_attempts} attempts")
+
+
 # get events in one initialization step and one or more continuation steps.
 def get_events(agent, start_date, end_date, args):
 
@@ -98,12 +150,15 @@ def get_events(agent, start_date, end_date, args):
                                                                    json.dumps(task['examples'][0]["output"][:12], indent=2),
                                                                    input)
     logging.info("Generating initial events")
-    try:
-        output = run_chatgpt(query, num_gen=1, num_tokens_request=512, use_16k=False, temperature=1.0).strip()
-        output = json.loads(output)
-    except:
-        output = run_chatgpt(query, num_gen=1, num_tokens_request=512, use_16k=False, temperature=1.0).strip()
-        output = json.loads(output)
+    # Gemini 応答が説明テキストを含んでも抽出できるようにする
+    # プロンプト末尾に JSON 出力指示を追加 (元プロンプト末尾は OUTPUT: )
+    if not query.strip().lower().endswith('output:'):
+        query = query + '\nReturn ONLY a valid JSON list. Do not include any explanation.'
+    else:
+        query = query + '\nReturn ONLY a valid JSON list. Do not include any explanation.'
+    if getattr(args, 'lang', 'en') == 'ja':
+        query += '\n各 sub-event の "sub-event" は自然な日本語で。キー名 (sub-event, time, caused_by, id) は英語を維持。'
+    output = _call_and_parse(query, 512, phase='initial')
 
     agent_events = output
     print("The following events have been generated in the initialization step:")
@@ -124,12 +179,12 @@ def get_events(agent, start_date, end_date, args):
                                                                    )
         query_length = num_tokens_from_string(query, 'gpt-3.5-turbo')
         request_length = min(1024, 4096-query_length)
-        try:
-            output = run_chatgpt(query, num_gen=1, num_tokens_request=request_length, use_16k=False, temperature=1.0).strip()
-            output = json.loads(output)
-        except:
-            output = run_chatgpt(query, num_gen=1, num_tokens_request=request_length, use_16k=False, temperature=1.0).strip()
-            output = json.loads(output)
+        # 継続生成プロンプトにも JSON 限定指示を強化
+        if 'Return ONLY a valid JSON list' not in query:
+            query = query + '\nReturn ONLY a valid JSON list. Do not include any explanation.'
+        if getattr(args, 'lang', 'en') == 'ja':
+            query += '\n各新規 sub-event の説明は日本語で。'
+        output = _call_and_parse(query, request_length, phase='continue')
         
         existing_eids = [e["id"] for e in agent_events]
         agent_events.extend([o for o in output if o["id"] not in existing_eids])

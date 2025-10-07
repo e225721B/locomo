@@ -1,4 +1,249 @@
 {
   "name": "Angela",
-  "persona_summary": "Angela is a 31 year old woman who works as the manager of a gift shop in Chapel Hill. She curates interesting pieces from local artists and has maintained a beautiful gallery in the form of the gift shop. She also makes her own art sometimes, in the form of oil paintings."
+  "persona_summary": "Angela is a 31 year old woman who works as the manager of a gift shop in Chapel Hill. She curates interesting pieces from local artists and has maintained a beautiful gallery in the form of the gift shop. She also makes her own art sometimes, in the form of oil paintings.",
+  "events_start_date": "19 March, 2023",
+  "graph": [
+    {
+      "sub-event": "Angela discovers a new local ceramic artist whose work she loves and features them in her shop.",
+      "date": "25 March, 2023",
+      "id": "E1",
+      "caused_by": []
+    },
+    {
+      "sub-event": "Inspired by the new ceramics, Angela starts a new oil painting exploring similar themes.",
+      "date": "1 April, 2023",
+      "id": "E2",
+      "caused_by": [
+        "E1"
+      ]
+    },
+    {
+      "sub-event": "Angela's curated collection gains popularity on social media, leading to a significant increase in sales at the gift shop.",
+      "date": "15 May, 2023",
+      "id": "E3",
+      "caused_by": []
+    },
+    {
+      "sub-event": "Angela hosts a successful workshop at her shop, teaching basic oil painting techniques.",
+      "date": "28 May, 2023",
+      "id": "E4",
+      "caused_by": [
+        "E2",
+        "E3"
+      ]
+    },
+    {
+      "sub-event": "Due to the increased demand, Angela decides to expand her shop by renting the adjacent space.",
+      "date": "5 June, 2023",
+      "id": "E5",
+      "caused_by": [
+        "E3"
+      ]
+    },
+    {
+      "sub-event": "Angela collaborates with the ceramic artist on a limited-edition line of painted ceramic pieces.",
+      "date": "10 June, 2023",
+      "id": "E6",
+      "caused_by": [
+        "E1",
+        "E2"
+      ]
+    },
+    {
+      "sub-event": "Feeling burnt out from the rapid expansion, Angela takes a short trip to the beach to recharge.",
+      "date": "17 June, 2023",
+      "id": "E7",
+      "caused_by": [
+        "E4",
+        "E5",
+        "E6"
+      ]
+    },
+    {
+      "sub-event": "Angela receives a large order for custom-painted ceramic pieces from a corporate client.",
+      "date": "21 May, 2023",
+      "id": "E8",
+      "caused_by": [
+        "E1",
+        "E3"
+      ]
+    },
+    {
+      "sub-event": "Inspired by her recent success, Angela starts sketching ideas for a new series of larger oil paintings.",
+      "date": "1 June, 2023",
+      "id": "E9",
+      "caused_by": [
+        "E2",
+        "E4"
+      ]
+    },
+    {
+      "sub-event": "Angela hires a part-time assistant to help manage the increasing workload at the shop.",
+      "date": "8 June, 2023",
+      "id": "E10",
+      "caused_by": [
+        "E5"
+      ]
+    },
+    {
+      "sub-event": "Angela feels a renewed sense of creative energy after her beach trip and plans a gallery showing of her new work.",
+      "date": "24 June, 2023",
+      "id": "E11",
+      "caused_by": [
+        "E7",
+        "E9"
+      ]
+    }
+  ],
+  "events_session_1": [
+    {
+      "sub-event": "Angela discovers a new local ceramic artist whose work she loves and features them in her shop.",
+      "date": "25 March, 2023",
+      "id": "E1",
+      "caused_by": []
+    }
+  ],
+  "session_1_date_time": "8:04 pm on 26 March, 2023",
+  "session_1": [
+    {
+      "text": "Hi Angela! It's nice to meet you. How was your weekend?  I spent most of mine working on my dissertation.",
+      "raw_text": "Hi Angela! It's nice to meet you. How was your weekend?  I spent most of mine working on my dissertation.",
+      "speaker": "Alisa",
+      "clean_text": "Hey Angela! Nice to meet ya. How was your weekend? I mostly worked on my dissertation.",
+      "dia_id": "D1:1"
+    },
+    {
+      "text": "It was lovely! I found an amazing ceramic artist yesterday\u2013 they're local! How's the dissertation coming along?",
+      "raw_text": "It was lovely! I found an amazing ceramic artist yesterday\u2013 they're local! How's the dissertation coming along?",
+      "speaker": "Angela",
+      "clean_text": "Cool! Found a great local potter yesterday. How's the dissertation going?",
+      "dia_id": "D1:2"
+    },
+    {
+      "text": "It's tough, but I'm aiming to defend by June! Did you end up buying anything?  I just started digital art, wanna see?",
+      "raw_text": "It's tough, but I'm aiming to defend by June! Did you end up buying anything?  I just started digital art, wanna see?",
+      "speaker": "Alisa",
+      "clean_text": "Ugh, it's hard, but I wanna defend by June! Get anything good?  I'm messing with digital art, wanna see?",
+      "dia_id": "D1:3"
+    },
+    {
+      "text": "Wow, June!  Ambitious! I'd love to see your art. Their mugs are amazing.",
+      "raw_text": "Wow, June!  Ambitious! I'd love to see your art. Their mugs are amazing.",
+      "speaker": "Angela",
+      "clean_text": "Hey June, ambitious! I'd love to see your art, those mugs are awesome.",
+      "dia_id": "D1:4"
+    },
+    {
+      "text": "[Shares a photo of a stylized portrait on an iPad screen] Just started using Procreate last Friday. What do you think?  Do you do any art?",
+      "raw_text": "[Shares a photo of a stylized portrait on an iPad screen] Just started using Procreate last Friday. What do you think?  Do you do any art?",
+      "speaker": "Alisa",
+      "clean_text": "Tried Procreate Friday. Thoughts?  You draw at all?",
+      "dia_id": "D1:5"
+    },
+    {
+      "text": "Love the texture! I mostly paint.  [shares a photo of one of her oil paintings] [Close-up of an oil painting depicting a vibrant sunset over a field of sunflowers. The impasto technique is evident in the thick brushstrokes of the sunflowers, creating a textured effect.]  This one's from last summer, inspired by my grandma's garden. Do you work with landscapes too?",
+      "raw_text": "Love the texture! I mostly paint.  [shares a photo of one of her oil paintings] [Close-up of an oil painting depicting a vibrant sunset over a field of sunflowers. The impasto technique is evident in the thick brushstrokes of the sunflowers, creating a textured effect.]  This one's from last summer, inspired by my grandma's garden. Do you work with landscapes too?",
+      "speaker": "Angela",
+      "clean_text": "Love the texture! I mostly paint. This one's from last summer, my grandma's garden inspired it.  You do landscapes too?",
+      "dia_id": "D1:6"
+    },
+    {
+      "text": "[shares a photo of a stylized digital painting of a single pink rose]",
+      "raw_text": "[shares a photo of a stylized digital painting of a single pink rose]",
+      "speaker": "Alisa",
+      "clean_text": "You're missing the chat, caption, and what you're trying to do.  Give me those so I can rewrite the chat.  Like:\n\n**CHAT:** This rose is so pretty!\n**CAPTION:** Digital painting practice. Trying out new brushes! #digitalart #rose #pink\n**WHAT YOU WANT:** shares a digital painting they made\n\n**Then I can give you something like:**\n\nThis rose is so pretty!  Just finished painting it, trying out new",
+      "dia_id": "D1:7"
+    },
+    {
+      "text": "Wow, those brushes look great! I mostly do oils.  My grandma\u2019s garden inspired this one.",
+      "raw_text": "Wow, those brushes look great! I mostly do oils.  My grandma\u2019s garden inspired this one.",
+      "speaker": "Angela",
+      "clean_text": "Nice brushes! I'm mostly an oil painter.  Grandma's garden was my inspiration.",
+      "dia_id": "D1:8"
+    },
+    {
+      "text": "Cool!  My prof, Dr. Smith, says oils are hard. Here's my latest. What do you think?",
+      "raw_text": "Cool!  My prof, Dr. Smith, says oils are hard. Here's my latest. What do you think?",
+      "speaker": "Alisa",
+      "clean_text": "Cool! My prof says oils are tough.  Here's my latest. Thoughts?",
+      "dia_id": "D1:9"
+    },
+    {
+      "text": "Wow, vibrant colors! I also work with oils. Do you find blending difficult?",
+      "raw_text": "Wow, vibrant colors! I also work with oils. Do you find blending difficult?",
+      "speaker": "Angela",
+      "clean_text": "Nice colors! I paint with oils too. Is blending hard?",
+      "dia_id": "D1:10"
+    },
+    {
+      "text": "It is!  I started with landscapes. Like this one from last week. My attempt at Joshua Tree National Park!",
+      "raw_text": "It is!  I started with landscapes. Like this one from last week. My attempt at Joshua Tree National Park!",
+      "speaker": "Alisa",
+      "clean_text": "Yep! Started with landscapes, like this one from last week \u2013 Joshua Tree!",
+      "dia_id": "D1:11"
+    },
+    {
+      "text": "Wow, Joshua Tree! I\u2019d love to go sometime. My latest piece is flowers too, actually.",
+      "raw_text": "Wow, Joshua Tree! I\u2019d love to go sometime. My latest piece is flowers too, actually.",
+      "speaker": "Angela",
+      "clean_text": "Joshua Tree's cool! I wanna go.  Mine's flowers too.",
+      "dia_id": "D1:12"
+    },
+    {
+      "text": "[shares a photo of a digital painting of a desert landscape with Joshua trees in the foreground and mountains in the background] [CAPTION: Practicing blending in Procreate. Inspired by my Joshua Tree trip last week! #digitalart #landscape #joshuatree]  Blending *is* tough!  Ever used Procreate?",
+      "raw_text": "[shares a photo of a digital painting of a desert landscape with Joshua trees in the foreground and mountains in the background] [CAPTION: Practicing blending in Procreate. Inspired by my Joshua Tree trip last week! #digitalart #landscape #joshuatree]  Blending *is* tough!  Ever used Procreate?",
+      "speaker": "Alisa",
+      "clean_text": "Blending's hard!  Tried Procreate?",
+      "dia_id": "D1:13"
+    },
+    {
+      "text": "Love the Joshua Tree vibe!  My grandma's roses were my inspo for this. [shares a photo of an oil painting of roses] Grandma Helen planted them when I was ten.  Ever tried oils?",
+      "raw_text": "Love the Joshua Tree vibe!  My grandma's roses were my inspo for this. [shares a photo of an oil painting of roses] Grandma Helen planted them when I was ten.  Ever tried oils?",
+      "speaker": "Angela",
+      "clean_text": "Love the JT vibe! My grandma's roses inspired this.  She planted them when I was ten. Tried oils yet?",
+      "dia_id": "D1:14"
+    },
+    {
+      "text": "My iPad's my canvas.  Grandma sounds sweet! Ever try digital?",
+      "raw_text": "My iPad's my canvas.  Grandma sounds sweet! Ever try digital?",
+      "speaker": "Alisa",
+      "clean_text": "I draw on my iPad. Grandma's nice! Tried digital art?",
+      "dia_id": "D1:15"
+    },
+    {
+      "text": "Grandma's roses are my fave! [shares a photo of an oil painting of pink roses]  Been painting since I was a kid, thanks to her.  What got you into digital?",
+      "raw_text": "Grandma's roses are my fave! [shares a photo of an oil painting of pink roses]  Been painting since I was a kid, thanks to her.  What got you into digital?",
+      "speaker": "Angela",
+      "clean_text": "Love Grandma's roses! Been painting forever thanks to her. How'd you get into digital art?",
+      "dia_id": "D1:16"
+    },
+    {
+      "text": "My advisor, Dr. Chen, got me into it last fall!  Been hooked ever since.",
+      "raw_text": "My advisor, Dr. Chen, got me into it last fall!  Been hooked ever since.",
+      "speaker": "Alisa",
+      "clean_text": "Dr. Chen got me into it last fall and I've been hooked!",
+      "dia_id": "D1:17"
+    },
+    {
+      "text": "That's cool!  Dr. Chen sounds inspiring. I started featuring a new local potter in my shop yesterday, her work is amazing!  [shares photo of a ceramic mug] [This mug is by Sarah Miller, a local artist I discovered yesterday. Her work is gorgeous!]  What kind of art supplies do you use for your digital art?",
+      "raw_text": "That's cool!  Dr. Chen sounds inspiring. I started featuring a new local potter in my shop yesterday, her work is amazing!  [shares photo of a ceramic mug] [This mug is by Sarah Miller, a local artist I discovered yesterday. Her work is gorgeous!]  What kind of art supplies do you use for your digital art?",
+      "speaker": "Angela",
+      "clean_text": "Cool! Dr. Chen sounds awesome. I started selling a local potter's stuff yesterday, it's amazing! What digital art supplies do you use?",
+      "dia_id": "D1:18"
+    },
+    {
+      "text": "Just my iPad and Procreate!  Here\u2019s my setup. What kind of pottery?",
+      "raw_text": "Just my iPad and Procreate!  Here\u2019s my setup. What kind of pottery?",
+      "speaker": "Alisa",
+      "clean_text": "Just my iPad & Procreate! Here's my setup.  Whatcha makin'?",
+      "dia_id": "D1:19"
+    },
+    {
+      "text": "Wow, minimalist! I have a whole studio in my garage. What kind of iPad do you use?  My new potter makes amazing mugs. [Shares a photo of three mugs on a shelf in her shop] [Three new mugs from our featured artist, Sarah Miller! So excited to have her work in the shop. #localartist #pottery #ChapelHill]",
+      "raw_text": "Wow, minimalist! I have a whole studio in my garage. What kind of iPad do you use?  My new potter makes amazing mugs. [Shares a photo of three mugs on a shelf in her shop] [Three new mugs from our featured artist, Sarah Miller! So excited to have her work in the shop. #localartist #pottery #ChapelHill]",
+      "speaker": "Angela",
+      "clean_text": "Nice setup! I've got a whole studio in my garage, too. What iPad do you have? My potter's mugs are awesome.",
+      "dia_id": "D1:20"
+    }
+  ]
 }

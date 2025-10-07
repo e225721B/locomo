@@ -8,11 +8,15 @@ import random
 from datetime import date, timedelta, datetime
 from generative_agents.conversation_utils import *
 from generative_agents.html_utils import convert_to_chat_html
-from generative_agents.event_utils import *
 from generative_agents.memory_utils import *
-from transformers import BlipProcessor, BlipForConditionalGeneration
-from PIL import Image
+from generative_agents.memory_stream import MemoryStore
+# イベントグラフ機能削除: event_utils 依存を除去
+# from generative_agents.event_utils import *
+# 画像系（BLIP, PIL）使用を停止（オプションで完全削除）
+# from transformers import BlipProcessor, BlipForConditionalGeneration
+# from PIL import Image
 from global_methods import run_chatgpt, run_chatgpt_with_examples, set_openai_key
+# import torch  # 画像キャプション無効化のため未使用
 
 logging.basicConfig(level=logging.INFO)
 
@@ -31,10 +35,13 @@ def parse_args():
     parser.add_argument('--max-turns-per-session', type=int, default=20, help="Maximum number of total turns in each session")
     parser.add_argument('--num-events-per-session', type=int, default=50, help="Total number of events to be assigned to each agent per session; 1-2 works best")
 
-    parser.add_argument('--persona', action="store_true", help="Set flag to sample a new persona from MSC and generate details")
+    parser.add_argument('--persona', action="store_true", help="Set flag to sample a new persona from MSC and generate details (ignored if --persona-a/--persona-b are provided)")
+    parser.add_argument('--persona-a', type=str, default=None, help="Path to user-provided persona for Agent A (json/txt). If set, uses this instead of MSC")
+    parser.add_argument('--persona-b', type=str, default=None, help="Path to user-provided persona for Agent B (json/txt). If set, uses this instead of MSC")
     parser.add_argument('--session', action="store_true", help="Set flag to generate sessions based on the generated/existing personas")
-    parser.add_argument('--events', action="store_true", help="Set flag to generate and events suited to the generated/existing personas")
-    parser.add_argument('--blip-caption', action="store_true", help="Set flag to use BLIP model to generate captions for downloaded images")
+    # イベント生成および画像キャプション関連フラグを無効化（後方互換のため受け取るが無視）
+    parser.add_argument('--events', action="store_true", help="(Disabled) Event graph generation removed")
+    parser.add_argument('--blip-caption', action="store_true", help="(Disabled) BLIP captioning removed")
     parser.add_argument('--overwrite-persona', action='store_true', help="Overwrite existing persona summaries saved in the agent files")
     parser.add_argument('--overwrite-events', action='store_true', help="Overwrite existing events saved in the agent files")
     parser.add_argument('--overwrite-session', action='store_true', help="Overwrite existing sessions saved in the agent files")
@@ -42,20 +49,99 @@ def parse_args():
 
     parser.add_argument('--emb-file', type=str, default='embeddings.pkl', help="Name of the file used to save embeddings for the fine-grained retrieval-based memory module")
     parser.add_argument('--reflection', action="store_true", help="Set flag to use reflection module at the end of each session and include in the conversation generation prompt for context")
+    parser.add_argument('--relationships', action='store_true', help='Evaluate relationship scores (intimacy, power, social_distance, trust) each session for both directions')
+    parser.add_argument('--intra-relationships', action='store_true', help='Evaluate relationship scores every N turns during a session and pass them into the agent prompt')
+    parser.add_argument('--intra-frequency', type=int, default=5, help='Number of turns between intra-session relationship evaluations (default 5)')
+    # Memory stream options
+    parser.add_argument('--memory-stream', action='store_true', help='Enable memory stream: store facts/reflections and retrieve top-K memories each turn')
+    parser.add_argument('--memory-topk', type=int, default=5, help='Top-K memories to retrieve per turn when memory stream is enabled')
+    parser.add_argument('--min-turns-before-stop', type=int, default=6, help='Do not include stop instruction until at least this turn index (0-based)')
+    parser.add_argument('--device', type=str, default='auto', choices=['auto','cpu','cuda','mps'], help='Device for BLIP model (auto: prefer cuda > mps > cpu)')
+    parser.add_argument('--image-search', action='store_true', help='(Disabled) image retrieval removed')
+    parser.add_argument('--lang', type=str, default='en', choices=['en','ja'], help='Conversation language (default en)')
 
     args = parser.parse_args()
     return args
 
 
-def get_blip_caption(img_file, model, processor):
+# 画像キャプション機能は削除
+def get_blip_caption(*args, **kwargs):
+    raise RuntimeError("BLIP captioning disabled")
 
-    raw_image = Image.open(img_file).convert('RGB')
-    # conditional image captioning
-    text = "a photography of"
-    inputs = processor(raw_image, text, return_tensors="pt").to("cuda")
-    out = model.generate(**inputs)
-    caption = processor.decode(out[0], skip_special_tokens=True)
-    return caption
+def _load_persona_from_file(path: str, default_name: str):
+    """ユーザー提供ファイルから persona を読み込む。
+    - JSON の場合: {"name": ..., "persona_summary": ...} または {"name": ..., "persona": ...}
+    - テキストの場合: 先頭行に 'name: xxx' があれば採用。残り全文を persona_summary とする。
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Persona file not found: {path}")
+    if p.suffix.lower() == '.json':
+        data = json.load(open(p))
+        name = data.get('name', default_name)
+        persona_summary = data.get('persona_summary') or data.get('persona') or ''
+        if not persona_summary:
+            # 他キーに入っている場合のゆるい対応
+            for k, v in data.items():
+                if isinstance(v, str) and len(v) > 10 and 'persona' in k.lower():
+                    persona_summary = v
+                    break
+        if not persona_summary:
+            raise ValueError(f"JSON does not contain 'persona' or 'persona_summary': {path}")
+        return { 'name': name, 'persona_summary': persona_summary }
+    else:
+        # テキスト系
+        txt = open(p, 'r', encoding='utf-8').read().strip()
+        name = default_name
+        lines = [l.strip() for l in txt.splitlines() if l.strip()]
+        if lines:
+            head = lines[0]
+            if head.lower().startswith('name:'):
+                name = head.split(':', 1)[1].strip() or default_name
+                persona_summary = '\n'.join(lines[1:]).strip()
+            else:
+                persona_summary = txt
+        else:
+            persona_summary = ''
+        if not persona_summary:
+            raise ValueError(f"Empty persona text in: {path}")
+        return { 'name': name, 'persona_summary': persona_summary }
+
+def get_user_persona(args):
+    """ユーザー指定のファイルから Agent A/B のペルソナを構築する。
+    どちらか一方のみ指定された場合、もう一方は既存ファイルを尊重（なければ MSC 生成にフォールバック）。
+    戻り値: (agent_a or None, agent_b or None)
+    """
+    agent_a = None
+    agent_b = None
+    if args.persona_a:
+        agent_a = _load_persona_from_file(args.persona_a, default_name='Agent A')
+    if args.persona_b:
+        agent_b = _load_persona_from_file(args.persona_b, default_name='Agent B')
+
+    # 追加: デフォルトのペルソナ配置ディレクトリからの自動読込
+    # 優先順位: 明示指定 > 既定ディレクトリ（LOCOMO_PERSONA_DIR or 固定パス）
+    default_dir = os.environ.get('LOCOMO_PERSONA_DIR', '/Users/tomokai/locomo/locomo/personas')
+    if (agent_a is None or agent_b is None) and default_dir and os.path.isdir(default_dir):
+        def _try_resolve(side: str):
+            # 探索候補（上から順に優先）
+            candidates = [
+                f'agent_{side}.json', f'agent_{side}.txt', f'{side}.json', f'{side}.txt',
+            ]
+            for name in candidates:
+                p = Path(default_dir) / name
+                if p.exists():
+                    return str(p)
+            return None
+        if agent_a is None:
+            fp = _try_resolve('a')
+            if fp:
+                agent_a = _load_persona_from_file(fp, default_name='Agent A')
+        if agent_b is None:
+            fp = _try_resolve('b')
+            if fp:
+                agent_b = _load_persona_from_file(fp, default_name='Agent B')
+    return agent_a, agent_b
 
 
 def save_agents(agents, args):
@@ -86,19 +172,19 @@ def get_random_time():
     return timedelta(hours=hours, minutes=minutes, seconds=0)
 
 
+## 時刻付きフォーマットは不要になったため削除。互換のためシンプルな日付文字列のみ利用。
 def datetimeStr2Obj(dateStr):
-    if 'am' in dateStr:
-        datetimeObj = datetime.strptime(dateStr, "%H:%M am on %d %B, %Y")
-    else:
-        datetimeObj = datetime.strptime(dateStr, "%H:%M pm on %d %B, %Y")
-    return datetimeObj
+    """旧フォーマット互換用: 日付だけを '%d %B, %Y' / '%d %B %Y' として解釈"""
+    try:
+        return datetime.strptime(dateStr, "%d %B, %Y")
+    except:
+        return datetime.strptime(dateStr, "%d %B %Y")
 
 def datetimeObj2Str(datetimeObj):
-
-    time_mod = 'am' if datetimeObj.hour <= 12 else 'pm'
-    hour = datetimeObj.hour if datetimeObj.hour <= 12 else datetimeObj.hour-12
-    min = str(datetimeObj.minute).zfill(2)
-    return str(hour) + ':' + min + ' ' + time_mod + ' on ' + str(datetimeObj.day) + ' ' + datetimeObj.strftime("%B") + ', ' + str(datetimeObj.year)
+    """date/datetime から日付のみの文字列を返す"""
+    if isinstance(datetimeObj, date) and not isinstance(datetimeObj, datetime):
+        return datetimeObj.strftime("%d %B, %Y")
+    return datetimeObj.strftime("%d %B, %Y")
 
 
 def dateObj2Str(dateObj):
@@ -134,6 +220,11 @@ def get_session_summary(session, speaker_1, speaker_2, curr_date, previous_summa
 
     query += '\n\n'
     # should summarize persona, previous conversations with respect to speaker.
+    if getattr(speaker_1, 'lang', None):
+        pass  # placeholder (speaker dict does not hold lang)
+    # 言語指定は run 時の args に存在するので後段 main から渡せないため、簡易判定: 日本語指示文を末尾に追加できるようフラグ環境利用も可
+    if os.environ.get('LOCOMO_LANG') == 'ja':
+        query += '\n出力は日本語で 150 語以内で要約してください。'
     output = run_chatgpt(query, 1, 150, 'chatgpt')
     output = output.strip()
     return output
@@ -175,91 +266,11 @@ def catch_date(date_str):
         return datetime.strptime(date_str, date_format2)
 
 
-def get_session_date(events, args, prev_date = None):
-
-    agent_a_events, agent_b_events = events
-    
-    agent_a_events = sort_events_by_time(agent_a_events)
-    curr_count = 0
-    stop_count = args.num_events_per_session
-    stop_date_a = None
-    for e in agent_a_events:
-        event_date =  catch_date(e['date'])
-        if prev_date:
-            if event_date >= prev_date:
-                print("Including event %s for Agent A" % json.dumps(e, indent=2))
-                curr_count += 1
-        else:
-            print("Including event %s for Agent A" % json.dumps(e, indent=2))
-            curr_count += 1
-        if curr_count == stop_count:
-            stop_date_a = event_date
-            break
-    stop_date_a = event_date
-
-    # get date from agent_b
-    agent_b_events = sort_events_by_time(agent_b_events)
-    curr_count = 0
-    stop_date_b = None
-    for e in agent_b_events:
-        # event_date = datetime.strptime(e['date'], "%d %B, %Y")
-        event_date = catch_date(e['date'])
-        if prev_date:
-            if event_date >= prev_date:
-                print("Including event %s for Agent B" % json.dumps(e, indent=2))
-                curr_count += 1
-        else:
-            print("Including event %s for Agent B" % json.dumps(e, indent=2))
-            curr_count += 1
-        if curr_count == stop_count:
-            stop_date_b = event_date
-            break
-    stop_date_b = event_date
-
-    # return max(stop_date_a, stop_date_b) + timedelta(days=1)
-    return min(stop_date_a, stop_date_b) + timedelta(days=random.choice([1, 2]))
+## イベント関連関数は削除（イベントグラフ非使用）
 
 
-def get_relevant_events(events, curr_date, prev_date=None):
-
-    events = sort_events_by_time(events)
-    relevant_events = []
-    for e in events:
-        # event_date = datetime.strptime(e['date'], "%d %B, %Y")
-        event_date = catch_date(e['date'])
-        if event_date > curr_date:
-            continue
-        if prev_date:
-            if event_date <= prev_date:
-                continue
-        relevant_events.append(e)
-
-    return relevant_events
-
-
-def get_event_string(session_events, all_events):
-
-    id2events = {e['id']: e for e in all_events}
-
-    event_string = ""
-    for e in session_events:
-        try:
-            event_text = 'On' + e["date"] + ", " + e["sub-event"]
-        except KeyError:
-            event_text = 'On' + e["date"] + ", " + e["sub_event"]
-
-        # if the event is caused by previous events, include them for context
-        if len(e['caused_by']) > 0:
-            event_text += ' Because previously'
-            for e_id in e['caused_by']:
-                try:
-                    event_text += ', ' + id2events[e_id]["sub-event"] + ' (%s)' % id2events[e_id]["date"]
-                except KeyError:
-                    event_text += ', ' + id2events[e_id]["sub_event"] + ' (%s)' % id2events[e_id]["date"]
-        
-        event_string += event_text + "\n"
-
-    return event_string
+def get_event_string(*args, **kwargs):
+    return ""  # 互換用ダミー
 
 
 def remove_context(args, curr_dialog, prev_dialog, caption=None):
@@ -274,10 +285,10 @@ def remove_context(args, curr_dialog, prev_dialog, caption=None):
                               query, num_gen=1, num_tokens_request=128, use_16k=False)
     return output
 
-
-def get_agent_query(speaker_1, speaker_2, curr_sess_id=0, 
-                    prev_sess_date_time='', curr_sess_date_time='', 
-                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False):
+#毎ターン毎にエージェントに渡す情報
+def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
+                    prev_sess_date_time='', curr_sess_date_time='',
+                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None):
 
     stop_instruction = "To end the conversation, write [END] at the end of the dialog."
     if instruct_stop:
@@ -318,6 +329,43 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                                         speaker_1['name'], speaker_2['name'], prev_sess_date_time, summary,
                                         curr_sess_date_time, speaker_1['name'],  speaker_2['name'], speaker_1['name']) 
     
+    if language == 'ja':
+        # 会話を日本語で行う指示を最後に追加（人物名やイベント文字列は原文保持）
+        query += "\n\n出力は必ず自然でカジュアルな日本語で、1発話のみ。括弧内の [END] 指示があればそのトークンも含めて出力の末尾に付与してください。英語は使わないでください。"
+        # メタ応答防止: 「〜と聞かれたことに対する返信」のような説明文を禁止
+        query += "\nメタな説明（例:『〜と聞かれたことに対する返信』）は書かず、自然な発話の本文だけを出力してください。"
+    # If memory snippet is provided (memory stream retrieval), append it
+    if memory_snippet:
+        try:
+            query += "\n\n" + memory_snippet
+        except Exception:
+            pass
+    # If a relationships snapshot is provided, append a short human-readable summary to the prompt
+    if relationships:
+        try:
+            # prefer by_speaker mapping when available
+            a_to_b = None
+            b_to_a = None
+            if isinstance(relationships, dict) and 'by_speaker' in relationships and speaker_1['name'] in relationships['by_speaker']:
+                a_to_b = relationships['by_speaker'].get(speaker_1['name'], {}).get('scores')
+                b_to_a = relationships['by_speaker'].get(speaker_2['name'], {}).get('scores')
+            else:
+                a_to_b = relationships.get('a_to_b') if isinstance(relationships, dict) else None
+                b_to_a = relationships.get('b_to_a') if isinstance(relationships, dict) else None
+
+            def _fmt_scores(scores):
+                if not scores:
+                    return 'intimacy=?, power=?, social_distance=?, trust=?'
+                return 'intimacy=%s, power=%s, social_distance=%s, trust=%s' % (
+                    scores.get('intimacy', '?'), scores.get('power', '?'), scores.get('social_distance', '?'), scores.get('trust', '?'))
+
+            rel_snip = '\n\nRelationship snapshot:\n'
+            rel_snip += f"{speaker_1['name']} -> {speaker_2['name']}: " + _fmt_scores(a_to_b) + '\n'
+            rel_snip += f"{speaker_2['name']} -> {speaker_1['name']}: " + _fmt_scores(b_to_a) + '\n'
+            rel_snip += 'Use these values to guide tone and formality (higher intimacy -> more informal; higher power -> more commanding).\n'
+            query += rel_snip
+        except Exception:
+            pass
     return query
 
 
@@ -339,67 +387,85 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         curr_speaker = 1
 
     session = []
+    # current in-session relationship snapshot (updated every N turns if enabled)
+    current_relationships = None
+    # memory stores (loaded once per session)
+    mem_a = MemoryStore(agent_a, lang=args.lang) if args.memory_stream else None
+    mem_b = MemoryStore(agent_b, lang=args.lang) if args.memory_stream else None
     
     stop_dialog_count = args.max_turns_per_session if args.max_turns_per_session <= 10 else random.choice(list(range(10, args.max_turns_per_session))) # choose a random turn number to include instructions for ending the session
     break_at_next_a = False
     break_at_next_b = False
     for i in range(args.max_turns_per_session):
-
         if break_at_next_a and break_at_next_b:
             break
 
+        # Before generating a turn, if intra-relationships is enabled and it's time, evaluate provisional relationships
+        if args.intra_relationships and i > 0 and (i % args.intra_frequency) == 0:
+            try:
+                # pass the partial session so far for mid-session evaluation
+                rels = get_session_relationships(args, agent_a, agent_b, curr_sess_id, session_dialog=session, session_date=agent_a.get('session_%s_date_time' % curr_sess_id))
+                # save provisional relationships into agent records so exports will include intermediate snapshots
+                agent_a['session_%s_relationships' % curr_sess_id] = rels
+                agent_b['session_%s_relationships' % curr_sess_id] = rels
+                current_relationships = rels
+                save_agents([agent_a, agent_b], args)
+                logging.info(f"[intra-relationships] Session {curr_sess_id} turn {i}: provisional relationships updated")
+            except Exception as e:
+                logging.warning(f"Failed to compute intra-session relationships at turn {i}: {e}")
+
         if curr_speaker == 0:
-            agent_query = get_agent_query(agent_a, agent_b, prev_sess_date_time=prev_date_time_string, curr_sess_date_time=curr_date_time_string,
-                                    curr_sess_id=curr_sess_id, use_events=args.events, instruct_stop=i>=stop_dialog_count, 
-                                    dialog_id=i, last_dialog='' if i == 0 else session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'], 
-                                    embeddings=embeddings, reflection=reflection)
+            # Memory retrieval for Agent A's turn
+            mem_snip = None
+            if args.memory_stream and mem_a is not None:
+                qtext = '' if i == 0 else (session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'])
+                top = mem_a.retrieve(qtext or agent_a.get('persona_summary',''), topk=args.memory_topk, now_date=curr_date_time_string)
+                mem_snip = MemoryStore.format_snippet(top, lang=args.lang)
+            agent_query = get_agent_query(
+                agent_a, agent_b,
+                prev_sess_date_time=prev_date_time_string,
+                curr_sess_date_time=curr_date_time_string,
+                curr_sess_id=curr_sess_id,
+                use_events=False,
+                instruct_stop=i >= stop_dialog_count,
+                dialog_id=i,
+                last_dialog='' if i == 0 else session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'],
+                embeddings=embeddings,
+                reflection=reflection,
+                language=args.lang,
+                relationships=current_relationships,
+                memory_snippet=mem_snip
+            )
         else:
-            agent_query = get_agent_query(agent_b, agent_a, prev_sess_date_time=prev_date_time_string, curr_sess_date_time=curr_date_time_string,
-                                    curr_sess_id=curr_sess_id, use_events=args.events, instruct_stop=i>=stop_dialog_count, 
-                                    dialog_id=i, last_dialog='' if i == 0 else session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'], 
-                                    embeddings=embeddings, reflection=reflection)
-        
-        # if the speaker in previous turn sent an image, get caption + questions
-        if len(session) > 1 and "img_id" in session[-1]:
+            mem_snip = None
+            if args.memory_stream and mem_b is not None:
+                qtext = '' if i == 0 else (session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'])
+                top = mem_b.retrieve(qtext or agent_b.get('persona_summary',''), topk=args.memory_topk, now_date=curr_date_time_string)
+                mem_snip = MemoryStore.format_snippet(top, lang=args.lang)
+            agent_query = get_agent_query(
+                agent_b, agent_a,
+                prev_sess_date_time=prev_date_time_string,
+                curr_sess_date_time=curr_date_time_string,
+                curr_sess_id=curr_sess_id,
+                use_events=False,
+                instruct_stop=(i >= stop_dialog_count and i >= args.min_turns_before_stop),
+                dialog_id=i,
+                last_dialog='' if i == 0 else session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'],
+                embeddings=embeddings,
+                reflection=reflection,
+                language=args.lang,
+                relationships=current_relationships,
+                memory_snippet=mem_snip
+            )
 
-            # caption = re.findall(r"\[.*\]", session[-1]['raw_text'])[0][1:-1]
-            caption = "shares " + session[-1]['blip_caption']
-            if curr_speaker == 0:
-                question = run_chatgpt(VISUAL_QUESTION_PROMPT.format(agent_a['persona_summary'], 
-                                                                     agent_b['persona_summary'], 
-                                                                     agent_b['name'], session[-1]['clean_text'], caption,
-                                                                     agent_a['name']), 1, 100, 'chatgpt')
-            else:
-                question = run_chatgpt(VISUAL_QUESTION_PROMPT.format(agent_a['persona_summary'], 
-                                                                     agent_b['persona_summary'], 
-                                                                     agent_a['name'], session[-1]['clean_text'], caption,
-                                                                     agent_b['name']), 1, 100, 'chatgpt')
-            question = question.strip()
+        # 画像関連機能無効化 (placeholder)
+        # if args.image_search ...
 
-            if curr_speaker == 0:
-                agent_query = agent_query + f"\nUse the following question about the photo shared by {agent_b['name']} in your reply: {question}."
-            else:
-                agent_query = agent_query + f"\nUse the following question about the photo shared by {agent_a['name']} in your reply: {question}."
-
-        output = run_chatgpt(agent_query + conv_so_far, 1, 100, 'chatgpt', temperature=1.2)
-        output = output.strip().split('\n')[0]
-        output = clean_dialog(output, agent_a['name'] if curr_speaker == 0 else agent_b['name'])
-        output = {"text": output, "raw_text": output}
-
-        image_search_query, photo_caption = insert_image_response(output["text"])
-        if image_search_query is not None:
-            img_dir = os.path.join(args.out_dir, 'session_%s' % curr_sess_id, 'a') if curr_speaker == 0 else os.path.join(args.out_dir, 'session_%s' % curr_sess_id, 'b')
-            file_urls, file_names = get_images(image_search_query, img_dir, i)
-            if file_names == []:
-                print("Image not found, for search query: ", image_search_query)
-            else:
-                output["img_url"] = file_urls
-                output["img_file"] = file_names
-                output["img_id"] = i
-                output['query'] = image_search_query
-                output['caption'] = photo_caption
-                if args.blip_caption:
-                    output['blip_caption'] = get_blip_caption(os.path.join(img_dir, file_names[0]), captioner, img_processor).replace('photography', 'photo')
+        # トークン上限を拡大し、複数行が返っても1発話として取り込み（改行→スペース）
+        raw = run_chatgpt(agent_query + conv_so_far, 1, 200, 'chatgpt', temperature=1.2)
+        raw = ' '.join(raw.strip().splitlines())
+        cleaned = clean_dialog(raw, agent_a['name'] if curr_speaker == 0 else agent_b['name'])
+        output = {"text": cleaned, "raw_text": cleaned}
 
         output["speaker"] = agent_a["name"] if curr_speaker == 0 else agent_b['name']
         text_replaced_caption = replace_captions(output["text"], args)
@@ -407,25 +473,19 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             if '[END]' in output["text"]:
                 output["clean_text"] = text_replaced_caption
             else:
-                output["clean_text"] = run_chatgpt(CASUAL_DIALOG_PROMPT % text_replaced_caption, 1, 100, 'chatgpt').strip()
+                if args.lang == 'ja':
+                    output["clean_text"] = text_replaced_caption
+                else:
+                    output["clean_text"] = run_chatgpt(CASUAL_DIALOG_PROMPT % text_replaced_caption, 1, 100, 'chatgpt').strip()
         else:
             output["clean_text"] = ""
-        
-        output["dia_id"] = 'D%s:%s' % (curr_sess_id, i+1)
+
+        output["dia_id"] = f'D{curr_sess_id}:{i+1}'
         session.append(output)
 
-        # print(output)
-        print("############ ", agent_a['name'] if curr_speaker == 0 else agent_b['name'], ': ', output["clean_text"])
-        if "caption" in output:
-            print("[ {} ]".format(output["blip_caption"]))
-        
-        # conv_so_far = conv_so_far + output["text"] + '\n'
-        if "blip_caption" in output:
-            conv_so_far = conv_so_far + output["clean_text"] + '[shares ' + output["blip_caption"] + ']' + '\n'
-        else:
-            conv_so_far = conv_so_far + output["clean_text"] + '\n'
+        print("############ ", output["speaker"], ': ', output["clean_text"])
 
-
+        conv_so_far = conv_so_far + output["clean_text"] + '\n'
 
         if output['text'].endswith('[END]'):
             if curr_speaker == 0:
@@ -445,6 +505,8 @@ def main():
     args = parse_args()
 
     set_openai_key()
+    # lang を環境変数経由で下位関数へ (簡易共有)
+    os.environ['LOCOMO_LANG'] = args.lang
 
     args.emb_file = os.path.join(args.out_dir, args.emb_file)
 
@@ -457,107 +519,67 @@ def main():
     args.agent_b_file = os.path.join(args.out_dir, 'agent_b.json')
 
     
-    # Step 1: Get personalities for the agents; get a randomly selected sample from the MSC dataset and expand the few-liner personas into detailed personas.
-    if args.persona:
+    # Step 1: Get personalities for the agents
+    # 優先度: ユーザー提供 (--persona-a/--persona-b) > 既存ファイル > MSC 自動生成 (--persona 指定時)
+    ua, ub = get_user_persona(args)
+    if ua or ub:
+        # 既存があれば読み込み、片方のみ更新も可能に
+        existing_a, existing_b = None, None
+        if os.path.exists(args.agent_a_file) and os.path.exists(args.agent_b_file) and not args.overwrite_persona:
+            existing_a, existing_b = load_agents(args)
+        agent_a = ua or existing_a
+        agent_b = ub or existing_b
+        # 足りない側が未定義なら、--persona があれば MSC で補完、なければエラー
+        if agent_a is None or agent_b is None:
+            if args.persona:
+                gen_a, gen_b = get_msc_persona(args)
+                agent_a = agent_a or gen_a
+                agent_b = agent_b or gen_b
+            else:
+                missing = 'A' if agent_a is None else 'B'
+                raise RuntimeError(f"Persona for Agent {missing} is missing. Provide --persona-{missing.lower()} or use --persona to auto-generate.")
+        save_agents([agent_a, agent_b], args)
+    elif args.persona:
+        # 互換: MSC から自動生成（従来挙動）
         agent_a, agent_b = get_msc_persona(args)
         if agent_a is not None and agent_b is not None:
             save_agents([agent_a, agent_b], args)
 
 
     # Step 2: check if events exist; if not, generate event graphs for each of the agents 
-    if args.events:
-
-        agent_a, agent_b = load_agents(args)
-
-        if ('graph' in agent_a and 'graph' in agent_b) and not args.overwrite_events:
-            pass
-        else:
-            # if 'session_1_date_time' not in agent_a:
-            start_date = get_random_date() # select a random date in 2022-2023
-            end_date = start_date + timedelta(days=args.num_days)
-            start_date = dateObj2Str(start_date)
-            end_date = dateObj2Str(end_date)
-            agent_a['events_start_date'] = start_date
-            agent_b['events_start_date'] = start_date
-            logging.info("Generating a random start date for the conversation")
-            save_agents([agent_a, agent_b], args)
-
-            
-            agent_a_events = []
-            agent_b_events = []
-
-            logging.info("Generating events for Agent A")
-            trials = 0
-            while len(agent_a_events) < args.num_events:
-                logging.info("(Re)trying to generate events with dense causal connections: trial %s" % trials)
-                agent_a_events = get_events(agent_a, start_date, end_date, args)
-                agent_a["graph"] = agent_a_events
-                trials += 1
-
-            logging.info("Generating events for Agent B")
-            trials = 0
-            while len(agent_b_events) < args.num_events:
-                logging.info("(Re)trying to generate events with dense causal connections: trial %s" % trials)
-                agent_b_events = get_events(agent_b, start_date, end_date, args)
-                agent_b["graph"] = agent_b_events
-            save_agents([agent_a, agent_b], args)
-
-        # make sure keys are all lower case
-        agent_a_events = agent_a['graph']
-        agent_a_events = [{k.lower(): v for k,v in e.items()} for e in agent_a_events]
-        agent_a["graph"] = agent_a_events
-        agent_b_events = agent_b['graph']
-        agent_b_events = [{k.lower(): v for k,v in e.items()} for e in agent_b_events]
-        agent_b["graph"] = agent_b_events
-        save_agents([agent_a, agent_b], args)
+    # イベント生成ステップ削除: 既存エージェント JSON に graph があっても無視
 
     # Step 3: 
     if args.session:
 
         agent_a, agent_b = load_agents(args)
 
-        if args.blip_caption: # load an image captioner
-            # init_model
-            img_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
-            captioner = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large").to("cuda")
-        else:
-            img_processor = None
-            captioner = None
+    # BLIP 初期化削除
+    img_processor = None
+    captioner = None
 
         # default start index is 1; if resuming conversation from a leter session, indicate in script arguments using --start-session
-        for j in range(args.start_session, args.num_sessions+1):
+    for j in range(args.start_session, args.num_sessions+1):
 
             print("******************* SESSION %s ******************" % j)
 
             if 'session_%s' % j not in agent_a or args.overwrite_session:
 
+                # 連続時間セッション: セッション1を基準日とし、以降は1日ずつ進める簡易モデル
                 if j>1:
-                    prev_date_time = datetimeStr2Obj(agent_a['session_%s_date_time' % (j-1)])
+                    prev_date = datetimeStr2Obj(agent_a['session_%s_date_time' % (j-1)])
                     prev_date_time_string = agent_a['session_%s_date_time' % (j-1)]
+                    curr_date = (prev_date + timedelta(days=1)).date()
                 else:
-                    prev_date_time, prev_date_time_string = None, None
-
-                # get conversation date and time for each session
-                curr_time = get_random_time() # timedelta object
-                curr_date = get_session_date([agent_a['graph'], agent_b['graph']], args, prev_date=prev_date_time) # datetime object
-                curr_date_time = curr_date + curr_time # datetime object
-                
-                relevant_events_a = get_relevant_events(agent_a['graph'],  curr_date_time, prev_date=prev_date_time)
-                agent_a['events_session_%s' % j] = relevant_events_a
-                relevant_events_b = get_relevant_events(agent_b['graph'],  curr_date_time, prev_date=prev_date_time)
-                agent_b['events_session_%s' % j] = relevant_events_b
-
-                if len(relevant_events_a) == 0 and len(relevant_events_b) == 0:
-                    logging.info("Stoppping conversation because no more events available in KG.")
-                    break
-
-                curr_date_time_string = datetimeObj2Str(curr_date_time)
+                    curr_date = get_random_date()
+                    prev_date_time_string = None
+                curr_date_time_string = datetimeObj2Str(curr_date)
                 agent_a['session_%s_date_time' % j] = curr_date_time_string
                 agent_b['session_%s_date_time' % j] = curr_date_time_string
                 save_agents([agent_a, agent_b], args)
                 
                 session = get_session(agent_a, agent_b, args,
-                                      prev_date_time_string=prev_date_time_string, curr_date_time_string=curr_date_time_string, 
+                                      prev_date_time_string=prev_date_time_string, curr_date_time_string=curr_date_time_string,
                                       curr_sess_id=j, captioner=captioner, img_processor=img_processor, reflection=args.reflection)
                 
                 agent_a['session_%s' % j] = session
@@ -576,6 +598,20 @@ def main():
                 print(facts)
 
                 save_agents([agent_a, agent_b], args)
+                # --- store facts into memory stream ---
+                if args.memory_stream:
+                    try:
+                        ms_a = MemoryStore(agent_a, lang=args.lang)
+                        ms_b = MemoryStore(agent_b, lang=args.lang)
+                        sess_date = agent_a.get('session_%s_date_time' % j)
+                        ms_a.add_from_facts(agent_a['name'], facts, session_date=sess_date, about='self')
+                        ms_a.add_from_facts(agent_b['name'], facts, session_date=sess_date, about='other')
+                        ms_b.add_from_facts(agent_b['name'], facts, session_date=sess_date, about='self')
+                        ms_b.add_from_facts(agent_a['name'], facts, session_date=sess_date, about='other')
+                        ms_a.save(); ms_b.save()
+                        save_agents([agent_a, agent_b], args)
+                    except Exception as e:
+                        logging.warning(f"Failed to add facts to memory stream: {e}")
 
             if args.reflection and ('session_%s_reflection' % j not in agent_a or args.overwrite_session):
 
@@ -588,6 +624,22 @@ def main():
                 print(reflections)
 
                 save_agents([agent_a, agent_b], args)
+                # --- store reflections into memory stream ---
+                if args.memory_stream:
+                    try:
+                        ms_a = MemoryStore(agent_a, lang=args.lang)
+                        ms_b = MemoryStore(agent_b, lang=args.lang)
+                        sess_date = agent_a.get('session_%s_date_time' % j)
+                        # A's self and A's other
+                        ms_a.add_from_reflections(reflections['a'].get('self', []), session_date=sess_date, about='self')
+                        ms_a.add_from_reflections(reflections['a'].get('other', []), session_date=sess_date, about='other')
+                        # B's self and B's other
+                        ms_b.add_from_reflections(reflections['b'].get('self', []), session_date=sess_date, about='self')
+                        ms_b.add_from_reflections(reflections['b'].get('other', []), session_date=sess_date, about='other')
+                        ms_a.save(); ms_b.save()
+                        save_agents([agent_a, agent_b], args)
+                    except Exception as e:
+                        logging.warning(f"Failed to add reflections to memory stream: {e}")
 
             if args.summary and ('session_%s_summary' % j not in agent_a or args.overwrite_session):
 
@@ -599,8 +651,112 @@ def main():
 
                 save_agents([agent_a, agent_b], args)
 
+            # Relationship scores per session (optional)
+            if args.relationships and ('session_%s_relationships' % j not in agent_a or args.overwrite_session):
+                rels = get_session_relationships(args, agent_a, agent_b, j)
+                agent_a['session_%s_relationships' % j] = rels
+                agent_b['session_%s_relationships' % j] = rels
+                logging.info(f"Session {j} relationships: {rels}")
+                save_agents([agent_a, agent_b], args)
+
     agent_a, agent_b = load_agents(args)
-    convert_to_chat_html(agent_a, agent_b, outfile=os.path.join(args.out_dir, 'sessions.html'), use_events=args.events, img_dir=args.out_dir)
+    convert_to_chat_html(agent_a, agent_b, outfile=os.path.join(args.out_dir, 'sessions.html'), use_events=False, img_dir=args.out_dir)
+
+    # 生成された全セッションを JSON として out-dir に書き出し
+    export_path = os.path.join(args.out_dir, 'all_sessions_export.json')
+    export_payload = {
+        'agent_a': agent_a['name'],
+        'agent_b': agent_b['name'],
+        'language': args.lang,
+        'sessions': []
+    }
+    for k, v in agent_a.items():
+        if k.startswith('session_') and k.split('_')[-1].isdigit():
+            sid = k.split('_')[-1]
+            if isinstance(v, list):  # 会話本体
+                export_payload['sessions'].append({
+                    'session_id': int(sid),
+                    'date_time': agent_a.get(f'session_{sid}_date_time'),
+                    'dialog': v,
+                    'facts': agent_a.get(f'session_{sid}_facts'),
+                    'reflection': agent_a.get(f'session_{sid}_reflection'),
+                    'summary': agent_a.get(f'session_{sid}_summary'),
+                    'relationships': agent_a.get(f'session_{sid}_relationships')
+                })
+    export_payload['sessions'] = sorted(export_payload['sessions'], key=lambda x: x['session_id'])
+    with open(export_path, 'w') as f:
+        json.dump(export_payload, f, ensure_ascii=False, indent=2)
+    logging.info(f"Exported all sessions JSON to {export_path}")
+
+    # --- メモリストリームが空なら facts/reflection から自動バックフィル ---
+    if args.memory_stream:
+        try:
+            def _has_mem(a):
+                ms = a.get('memory_stream')
+                return isinstance(ms, list) and len(ms) > 0
+            if not _has_mem(agent_a) or not _has_mem(agent_b):
+                logging.info("Memory stream is empty; backfilling from existing facts/reflections...")
+                ms_a = MemoryStore(agent_a, lang=args.lang)
+                ms_b = MemoryStore(agent_b, lang=args.lang)
+                # すべてのセッションを走査
+                sess_ids = [s['session_id'] for s in export_payload['sessions']]
+                for sid in sess_ids:
+                    sess_date = agent_a.get(f'session_{sid}_date_time')
+                    facts = agent_a.get(f'session_{sid}_facts')
+                    if isinstance(facts, dict):
+                        ms_a.add_from_facts(agent_a['name'], facts, session_date=sess_date, about='self')
+                        ms_a.add_from_facts(agent_b['name'], facts, session_date=sess_date, about='other')
+                        ms_b.add_from_facts(agent_b['name'], facts, session_date=sess_date, about='self')
+                        ms_b.add_from_facts(agent_a['name'], facts, session_date=sess_date, about='other')
+                    refl_a = agent_a.get(f'session_{sid}_reflection') or {}
+                    if isinstance(refl_a, dict):
+                        ms_a.add_from_reflections((refl_a.get('self') or []), session_date=sess_date, about='self')
+                        ms_a.add_from_reflections((refl_a.get('other') or []), session_date=sess_date, about='other')
+                    refl_b = agent_b.get(f'session_{sid}_reflection') or {}
+                    if isinstance(refl_b, dict):
+                        ms_b.add_from_reflections((refl_b.get('self') or []), session_date=sess_date, about='self')
+                        ms_b.add_from_reflections((refl_b.get('other') or []), session_date=sess_date, about='other')
+                ms_a.save(); ms_b.save()
+                save_agents([agent_a, agent_b], args)
+                logging.info("Backfilled memory stream from facts/reflections.")
+        except Exception as e:
+            # 例外の詳細なトレースを残して次のデバッグに備える
+            logging.exception(f"Failed to backfill memory stream: {e}")
+
+    # メモリストリームを別ファイルにエクスポート（embedding は除外した軽量版）
+    def _light_entries(entries):
+        light = []
+        for e in entries or []:
+            if not isinstance(e, dict):
+                continue
+            light.append({
+                'id': e.get('id'),
+                'text': e.get('text'),
+                'created_at': e.get('created_at'),
+                'source': e.get('source'),
+                'importance': e.get('importance'),
+                'refs': e.get('refs'),
+                'about': e.get('about'),
+            })
+        return light
+
+    mem_export = {
+        'agent_a': agent_a['name'],
+        'agent_b': agent_b['name'],
+        'language': args.lang,
+        'memory_stream': {
+            'agent_a': _light_entries(agent_a.get('memory_stream') or []),
+            'agent_b': _light_entries(agent_b.get('memory_stream') or []),
+        },
+        'stats': {
+            'agent_a': {'count': len(agent_a.get('memory_stream') or [])},
+            'agent_b': {'count': len(agent_b.get('memory_stream') or [])},
+        }
+    }
+    mem_export_path = os.path.join(args.out_dir, 'memory_stream_export.json')
+    with open(mem_export_path, 'w') as f:
+        json.dump(mem_export, f, ensure_ascii=False, indent=2)
+    logging.info(f"Exported memory stream JSON to {mem_export_path}")
 
 
 if __name__ == "__main__":
