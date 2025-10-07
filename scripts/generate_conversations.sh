@@ -6,7 +6,7 @@ source scripts/.env.sh
 python3 generative_agents/generate_conversations.py \
     --out-dir ./out/test \
     --prompt-dir ./prompt_examples \
-    --session --summary --reflection --memory-stream --memory-topk 3 --num-sessions 3 \
+    --session --summary --reflection --memory-stream --memory-topk 5 --num-sessions 3 \
     --persona \
     --lang ja \
     --max-turns-per-session 20 \
