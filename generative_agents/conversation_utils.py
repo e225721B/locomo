@@ -16,7 +16,7 @@ PERSONA_FROM_MSC_PROMPT = (
 
 EVENT2QUERY_PROMPT = "Let's write short image search queries in order to find a suitable image for illustrating the given events. Queries should not include names of people, years and other irrelevant details. For example:\n\nInput: A picture of the modern art museum he visited with his grandchildren in Paris in 2018.\nOutput: modern art museum in Paris\n\nInput: A picture of the shared room she and her siblings lived in when she was growing up.\nOutput: cramped room with multiple beds\n\nInput: A photo of the new art supplies Jeremy bought for his upcoming art project with his mentor.\nOutput: new art supplies on a table\n\nInput: A picture of the delicious homemade vegetable smoothie she prepared using fresh produce from her well-organized garden, which she loves to maintain every morning.\n Output: produce garden at home\n\nWrite search queries for the following inputs.\n\n%s\n\nWrite answers in the form of a json list, where each entry is a query."
 
-
+#最初の発話の際にエージェントに投げるプロンプト
 AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と初めて会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う一言を書いてください。会話を始める場合は、相手の近況を尋ねるか、最近あなたに起きた出来事について話してください。これまでの会話で共有した情報は繰り返さないでください。会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。'last Friday' や 'next month'、'when I was ten years old' のような時間参照や、具体的な場所名を含めてください。返答は 20 語相当以内の短い一文で書いてください。例えば、\n\n%s: 子どもの頃、母がよくパイナップルの誕生日ケーキを焼いてくれて大好きでした。\n\n会話を終えるときは『Bye!』と書いてください。\n\nCONVERSATION:\n\n"
 
 AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """

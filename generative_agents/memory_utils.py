@@ -11,13 +11,38 @@ import difflib
 logging.basicConfig(level=logging.INFO)
 
 
-REFLECTION_INIT_PROMPT = "{}\n\nGiven the information above, what are the three most salient insights that {} has about {}? Give concise answers in the form of a json list where each entry is a string."
+# Reflection prompts (EN/JA)
+REFLECTION_INIT_PROMPT_EN = "{}\n\nGiven the information above, what are the three most salient insights that {} has about {}? Give concise answers in the form of a json list where each entry is a string."
 
-REFLECTION_CONTINUE_PROMPT = "{} has the following insights about {} from previous interactions.{}\n\nTheir next conversation is as follows:\n\n{}\n\nGiven the information above, what are the three most salient insights that {} has about {} now? Give concise answers in the form of a json list where each entry is a string."
+REFLECTION_CONTINUE_PROMPT_EN = "{} has the following insights about {} from previous interactions.{}\n\nTheir next conversation is as follows:\n\n{}\n\nGiven the information above, what are the three most salient insights that {} has about {} now? Give concise answers in the form of a json list where each entry is a string."
 
-SELF_REFLECTION_INIT_PROMPT = "{}\n\nGiven the information above, what are the three most salient insights that {} has about self? Give concise answers in the form of a json list where each entry is a string."
+SELF_REFLECTION_INIT_PROMPT_EN = "{}\n\nGiven the information above, what are the three most salient insights that {} has about self? Give concise answers in the form of a json list where each entry is a string."
 
-SELF_REFLECTION_CONTINUE_PROMPT = "{} has the following insights about self.{}\n\n{}\n\nGiven the information above, what are the three most salient insights that {} has about self now? Give concise answers in the form of a json list where each entry is a string."
+SELF_REFLECTION_CONTINUE_PROMPT_EN = "{} has the following insights about self.{}\n\n{}\n\nGiven the information above, what are the three most salient insights that {} has about self now? Give concise answers in the form of a json list where each entry is a string."
+
+#内省時プロンプト
+REFLECTION_INIT_PROMPT_JA = (
+    "{}\n\n上の情報に基づき、{} が {} について持っている最も重要な洞察を3つ挙げてください。"
+    "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）だけを返してください。"
+)
+
+REFLECTION_CONTINUE_PROMPT_JA = (
+    "{} はこれまでのやり取りから {} について次の洞察を持っています。{}\n\n"
+    "次の会話は以下です:\n\n{}\n\n"
+    "上の情報に基づき、{} が {} について今持っている最も重要な洞察を3つ挙げてください。"
+    "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）のみを返してください。"
+)
+
+SELF_REFLECTION_INIT_PROMPT_JA = (
+    "{}\n\n上の情報に基づき、{} が自分自身について持っている最も重要な洞察を3つ挙げてください。"
+    "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）のみを返してください。"
+)
+
+SELF_REFLECTION_CONTINUE_PROMPT_JA = (
+    "{} は自分自身について次の洞察を持っています。{}\n\n{}\n\n"
+    "上の情報に基づき、{} が自分自身について今持っている最も重要な洞察を3つ挙げてください。"
+    "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）のみを返してください。"
+)
 
 
 CONVERSATION2FACTS_PROMPT_EN = """
@@ -40,6 +65,7 @@ RELATIONSHIP_ASSESS_PROMPT_EN = (
     "CONVERSATION (date included in first line):\n{conv}\n"
 )
 
+#関係値生成のためのプロンプト
 RELATIONSHIP_ASSESS_PROMPT_JA = (
     "次のCONVERSATION（当該セッションのみ）から、{src} が {dst} に対して感じている関係性を4つの指標で評価してください。\n"
     "各値は 1（非常に低い）〜10（非常に高い）の整数。\n"
@@ -71,6 +97,14 @@ def get_session_facts(args, agent_a, agent_b, session_idx, return_embeddings=Tru
     # 日本語出力を強制するため、ja のときは追加指示を与え、英語例文の影響を避ける
     if lang == 'ja':
         query += "\n出力する各『観察内容』のテキストは必ず日本語で書いてください。JSON のキー（話者名）とID表記はそのままで構いません。"
+        # 厳格化: JSONのキーは会話に登場する2名のみ・完全一致で固定
+        a_name = agent_a.get('name')
+        b_name = agent_b.get('name')
+        if a_name and b_name:
+            query += (
+                f"\n厳格条件: JSONのキー名は必ず \"{a_name}\" と \"{b_name}\" の二つのみとし、"
+                "これ以外のキーを出力してはいけません。表記は完全一致で出力してください。"
+            )
         examples = None
 
     conversation = ""
@@ -171,7 +205,7 @@ def get_session_facts(args, agent_a, agent_b, session_idx, return_embeddings=Tru
     
     return facts
 
-
+#内省を生成させるために情報を投げる関数
 def get_session_reflection(args, agent_a, agent_b, session_idx):
 
 
@@ -186,44 +220,61 @@ def get_session_reflection(args, agent_a, agent_b, session_idx):
 
 
     # Step 2: Self-reflections
+    lang = getattr(args, 'lang', 'en')
     if session_idx == 1:
-        prompt_a = SELF_REFLECTION_INIT_PROMPT.format(conversation, agent_a['name'])
-        prompt_b = SELF_REFLECTION_INIT_PROMPT.format(conversation, agent_b['name'])
-        if getattr(args, 'lang', 'en') == 'ja':
-            jp_hint = "\n出力は日本語の短い文だけを要素とするJSON配列で、文字列の配列として返してください。"
-            prompt_a += jp_hint
-            prompt_b += jp_hint
+        if lang == 'ja':
+            prompt_a = SELF_REFLECTION_INIT_PROMPT_JA.format(conversation, agent_a['name'])
+            prompt_b = SELF_REFLECTION_INIT_PROMPT_JA.format(conversation, agent_b['name'])
+        else:
+            prompt_a = SELF_REFLECTION_INIT_PROMPT_EN.format(conversation, agent_a['name'])
+            prompt_b = SELF_REFLECTION_INIT_PROMPT_EN.format(conversation, agent_b['name'])
         agent_a_self = run_json_trials(prompt_a, model='chatgpt', num_tokens_request=300)
         agent_b_self = run_json_trials(prompt_b, model='chatgpt', num_tokens_request=300)
 
     else:
-        prompt_a = SELF_REFLECTION_CONTINUE_PROMPT.format(agent_a['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_a['name'])
-        prompt_b = SELF_REFLECTION_CONTINUE_PROMPT.format(agent_b['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_b['name'])
-        if getattr(args, 'lang', 'en') == 'ja':
-            jp_hint = "\n出力は日本語の短い文だけを要素とするJSON配列で、文字列の配列として返してください。"
-            prompt_a += jp_hint
-            prompt_b += jp_hint
+        if lang == 'ja':
+            prompt_a = SELF_REFLECTION_CONTINUE_PROMPT_JA.format(
+                agent_a['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_a['name']
+            )
+            prompt_b = SELF_REFLECTION_CONTINUE_PROMPT_JA.format(
+                agent_b['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_b['name']
+            )
+        else:
+            prompt_a = SELF_REFLECTION_CONTINUE_PROMPT_EN.format(
+                agent_a['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_a['name']
+            )
+            prompt_b = SELF_REFLECTION_CONTINUE_PROMPT_EN.format(
+                agent_b['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_b['name']
+            )
         agent_a_self = run_json_trials(prompt_a, model='chatgpt', num_tokens_request=300)
         agent_b_self = run_json_trials(prompt_b, model='chatgpt', num_tokens_request=300)
 
     # Step 3: Reflection about other speaker
     if session_idx == 1:
-        prompt_ab = REFLECTION_INIT_PROMPT.format(conversation, agent_a['name'], agent_b['name'])
-        prompt_ba = REFLECTION_INIT_PROMPT.format(conversation, agent_b['name'], agent_a['name'])
-        if getattr(args, 'lang', 'en') == 'ja':
-            jp_hint = "\n出力は日本語の短い文だけを要素とするJSON配列で、文字列の配列として返してください。"
-            prompt_ab += jp_hint
-            prompt_ba += jp_hint
+        if lang == 'ja':
+            prompt_ab = REFLECTION_INIT_PROMPT_JA.format(conversation, agent_a['name'], agent_b['name'])
+            prompt_ba = REFLECTION_INIT_PROMPT_JA.format(conversation, agent_b['name'], agent_a['name'])
+        else:
+            prompt_ab = REFLECTION_INIT_PROMPT_EN.format(conversation, agent_a['name'], agent_b['name'])
+            prompt_ba = REFLECTION_INIT_PROMPT_EN.format(conversation, agent_b['name'], agent_a['name'])
         agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
         agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
 
     else:
-        prompt_ab = REFLECTION_CONTINUE_PROMPT.format(agent_a['name'], agent_b['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_a['name'], agent_b['name'])
-        prompt_ba = REFLECTION_CONTINUE_PROMPT.format(agent_b['name'], agent_a['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_b['name'], agent_a['name'])
-        if getattr(args, 'lang', 'en') == 'ja':
-            jp_hint = "\n出力は日本語の短い文だけを要素とするJSON配列で、文字列の配列として返してください。"
-            prompt_ab += jp_hint
-            prompt_ba += jp_hint
+        if lang == 'ja':
+            prompt_ab = REFLECTION_CONTINUE_PROMPT_JA.format(
+                agent_a['name'], agent_b['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_a['name'], agent_b['name']
+            )
+            prompt_ba = REFLECTION_CONTINUE_PROMPT_JA.format(
+                agent_b['name'], agent_a['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_b['name'], agent_a['name']
+            )
+        else:
+            prompt_ab = REFLECTION_CONTINUE_PROMPT_EN.format(
+                agent_a['name'], agent_b['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_a['name'], agent_b['name']
+            )
+            prompt_ba = REFLECTION_CONTINUE_PROMPT_EN.format(
+                agent_b['name'], agent_a['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_b['name'], agent_a['name']
+            )
         agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
         agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
 
