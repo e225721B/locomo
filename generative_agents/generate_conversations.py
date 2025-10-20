@@ -64,6 +64,8 @@ def parse_args():
     parser.add_argument('--device', type=str, default='auto', choices=['auto','cpu','cuda','mps'], help='Device for BLIP model (auto: prefer cuda > mps > cpu)')  # 無効: 画像系モデルのデバイス
     parser.add_argument('--image-search', action='store_true', help='(Disabled) image retrieval removed')  # 無効: 旧画像検索
     parser.add_argument('--lang', type=str, default='en', choices=['en','ja'], help='Conversation language (default en)')  # 会話の出力言語
+    parser.add_argument('--session-topic', type=str, default=None, help='Optional conversation theme/topic to guide the dialogue (applied across turns)')  # 会話テーマ
+    parser.add_argument('--session-topics-file', type=str, default=None, help='Path to JSON mapping of session id to topic. Accepts {"1":"...","2":"..."} or ["...","..."] (1-based).')  # セッション別テーマ
 
     args = parser.parse_args()
     return args
@@ -293,7 +295,7 @@ def remove_context(args, curr_dialog, prev_dialog, caption=None):
 #毎ターンごとにエージェントに渡す情報
 def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                     prev_sess_date_time='', curr_sess_date_time='',
-                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None):
+                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None, topic=None):
 
     stop_instruction = "To end the conversation, write [END] at the end of the dialog."
     if instruct_stop:
@@ -339,6 +341,12 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
         query += "\n\n出力は必ず自然でカジュアルな日本語で、1発話のみ。括弧内の [END] 指示があればそのトークンも含めて出力の末尾に付与してください。英語は使わないでください。"
         # メタ応答防止: 「〜と聞かれたことに対する返信」のような説明文を禁止
         query += "\nメタな説明（例:『〜と聞かれたことに対する返信』）は書かず、自然な発話の本文だけを出力してください。"
+    # Optional: conversation topic guidance
+    if topic:
+        if language == 'ja':
+            query += f"\n\n会話のテーマ: {topic}\nこのテーマに沿って自然に話題を展開してください。無理に繰り返さず、相手の発話に応じた自然な一言で返答してください。"
+        else:
+            query += f"\n\nConversation theme: {topic}\nStick to this theme naturally. Avoid repetition and reply with a single, natural utterance that responds to your partner."
     # If memory snippet is provided (memory stream retrieval), append it
     if memory_snippet:
         try:
@@ -374,13 +382,22 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
     return query
 
 
-def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time_string='', curr_sess_id=0, captioner=None, img_processor=None, reflection=False):
+def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time_string='', curr_sess_id=0, captioner=None, img_processor=None, reflection=False, session_topic=None):
     
-    # load embeddings for retrieveing relevat observations from previous conversations
+    # load embeddings for retrieving relevant observations from previous conversations
+    # if the embeddings file does not exist (e.g. --facts not used), proceed without fine-grained retrieval
     if curr_sess_id == 1:
         embeddings = None
     else:
-        embeddings = pkl.load(open(args.emb_file, 'rb'))
+        try:
+            if os.path.exists(args.emb_file):
+                embeddings = pkl.load(open(args.emb_file, 'rb'))
+            else:
+                logging.info(f"Embeddings file not found at {args.emb_file}; proceeding without embeddings-based retrieval for session {curr_sess_id}.")
+                embeddings = None
+        except Exception as e:
+            logging.warning(f"Failed to load embeddings file {args.emb_file}: {e}. Proceeding without embeddings.")
+            embeddings = None
 
     # select one of the speakers to start the session at random
     curr_speaker = -1
@@ -526,7 +543,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 reflection=reflection,
                 language=args.lang,
                 relationships=current_relationships,
-                memory_snippet=mem_snip
+                memory_snippet=mem_snip,
+                topic=session_topic
             )
         else:
             mem_snip = None
@@ -553,7 +571,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 reflection=reflection,
                 language=args.lang,
                 relationships=current_relationships,
-                memory_snippet=mem_snip
+                memory_snippet=mem_snip,
+                topic=session_topic
             )
 
         # 画像関連機能無効化 (placeholder)
@@ -700,6 +719,28 @@ def main():
 
     args.emb_file = os.path.join(args.out_dir, args.emb_file)
 
+    # セッション別テーマの読み込み（任意）
+    session_topics = {}
+    if args.session_topics_file and os.path.exists(args.session_topics_file):
+        try:
+            with open(args.session_topics_file, 'r', encoding='utf-8') as tf:
+                data = json.load(tf)
+            if isinstance(data, dict):
+                # keys may be strings; normalize to int
+                for k, v in data.items():
+                    try:
+                        session_topics[int(k)] = v
+                    except Exception:
+                        continue
+            elif isinstance(data, list):
+                # 1-based indexing: index 0 -> session 1
+                for idx, v in enumerate(data, start=1):
+                    session_topics[idx] = v
+            else:
+                logging.warning(f"Unsupported session-topics-file format: {type(data)}")
+        except Exception as e:
+            logging.warning(f"Failed to read session-topics-file: {e}")
+
     # create dataset directory
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
@@ -741,43 +782,60 @@ def main():
 
     # Step 3: 
     if args.session:
-
         agent_a, agent_b = load_agents(args)
 
     # BLIP 初期化削除
     img_processor = None
     captioner = None
 
-        # default start index is 1; if resuming conversation from a leter session, indicate in script arguments using --start-session
+    # default start index is 1; if resuming conversation from a leter session, indicate in script arguments using --start-session
     for j in range(args.start_session, args.num_sessions+1):
 
-            print("******************* SESSION %s ******************" % j)
+        # このセッションに適用するテーマ（単一指定 > ファイル指定の順で優先）
+        session_topic = args.session_topic if args.session_topic else session_topics.get(j)
 
-            if 'session_%s' % j not in agent_a or args.overwrite_session:
+        print("******************* SESSION %s ******************" % j)
 
-                # 連続時間セッション: セッション1を基準日とし、以降は1日ずつ進める簡易モデル
-                if j>1:
-                    prev_date = datetimeStr2Obj(agent_a['session_%s_date_time' % (j-1)])
-                    prev_date_time_string = agent_a['session_%s_date_time' % (j-1)]
-                    curr_date = (prev_date + timedelta(days=1)).date()
-                else:
-                    curr_date = get_random_date()
-                    prev_date_time_string = None
-                curr_date_time_string = datetimeObj2Str(curr_date)
-                agent_a['session_%s_date_time' % j] = curr_date_time_string
-                agent_b['session_%s_date_time' % j] = curr_date_time_string
-                save_agents([agent_a, agent_b], args)
-                
-                session = get_session(agent_a, agent_b, args,
-                                      prev_date_time_string=prev_date_time_string, curr_date_time_string=curr_date_time_string,
-                                      curr_sess_id=j, captioner=captioner, img_processor=img_processor, reflection=args.reflection)
-                
-                agent_a['session_%s' % j] = session
-                agent_b['session_%s' % j] = session
+        if 'session_%s' % j not in agent_a or args.overwrite_session:
+            # 連続時間セッション: セッション1を基準日とし、以降は1日ずつ進める簡易モデル
+            if j > 1:
+                prev_date = datetimeStr2Obj(agent_a['session_%s_date_time' % (j-1)])
+                prev_date_time_string = agent_a['session_%s_date_time' % (j-1)]
+                curr_date = (prev_date + timedelta(days=1)).date()
+            else:
+                curr_date = get_random_date()
+                prev_date_time_string = None
+            curr_date_time_string = datetimeObj2Str(curr_date)
+            agent_a['session_%s_date_time' % j] = curr_date_time_string
+            agent_b['session_%s_date_time' % j] = curr_date_time_string
+            # テーマがあれば保存（表示とエクスポート用）
+            if session_topic:
+                agent_a['session_%s_topic' % j] = session_topic
+                agent_b['session_%s_topic' % j] = session_topic
+            save_agents([agent_a, agent_b], args)
 
-                save_agents([agent_a, agent_b], args)
+            session = get_session(
+                agent_a, agent_b, args,
+                prev_date_time_string=prev_date_time_string, curr_date_time_string=curr_date_time_string,
+                curr_sess_id=j, captioner=captioner, img_processor=img_processor, reflection=args.reflection,
+                session_topic=session_topic
+            )
 
-            if args.facts and (('session_%s_facts' % j not in agent_a) or args.overwrite_session):
+            agent_a['session_%s' % j] = session
+            agent_b['session_%s' % j] = session
+
+            save_agents([agent_a, agent_b], args)
+        else:
+            # 既存セッションがあり再生成しない場合でも、テーマ指定があれば保存して表示/エクスポートに反映
+            if session_topic:
+                try:
+                    agent_a['session_%s_topic' % j] = session_topic
+                    agent_b['session_%s_topic' % j] = session_topic
+                    save_agents([agent_a, agent_b], args)
+                except Exception:
+                    pass
+
+        if args.facts and (('session_%s_facts' % j not in agent_a) or args.overwrite_session):
 
                 facts = get_session_facts(args, agent_a, agent_b, j)
 
@@ -803,7 +861,7 @@ def main():
                     except Exception as e:
                         logging.warning(f"Failed to add facts to memory stream: {e}")
 
-            if args.reflection and (('session_%s_reflection' % j not in agent_a) or args.overwrite_session):
+        if args.reflection and (('session_%s_reflection' % j not in agent_a) or args.overwrite_session):
                 # 早期反省(early reflection)が既に生成済みならスキップ（上書き要求がある場合を除く）
                 if ('session_%s_reflection' % j in agent_a) and not args.overwrite_session:
                     pass
@@ -842,7 +900,7 @@ def main():
                     except Exception as e:
                         logging.warning(f"Failed to add reflections to memory stream: {e}")
 
-            if args.summary and ('session_%s_summary' % j not in agent_a or args.overwrite_session):
+        if args.summary and ('session_%s_summary' % j not in agent_a or args.overwrite_session):
 
                 summary = get_session_summary(agent_a['session_%s' % j], agent_a, agent_b, agent_a['session_%s_date_time' % j], 
                                               previous_summary=None if j==1 else agent_a['session_%s_summary' % (j-1)])
@@ -854,12 +912,21 @@ def main():
                 save_agents([agent_a, agent_b], args)
 
             # Relationship scores per session (optional)
-            if args.relationships and ('session_%s_relationships' % j not in agent_a or args.overwrite_session):
+        if args.relationships and ('session_%s_relationships' % j not in agent_a or args.overwrite_session):
                 rels = get_session_relationships(args, agent_a, agent_b, j)
                 agent_a['session_%s_relationships' % j] = rels
                 agent_b['session_%s_relationships' % j] = rels
                 logging.info(f"Session {j} relationships: {rels}")
                 save_agents([agent_a, agent_b], args)
+        else:
+            # 既存セッションがあり再生成しない場合でも、テーマ指定があれば保存して表示/エクスポートに反映
+            if session_topic:
+                try:
+                    agent_a['session_%s_topic' % j] = session_topic
+                    agent_b['session_%s_topic' % j] = session_topic
+                    save_agents([agent_a, agent_b], args)
+                except Exception:
+                    pass
 
     agent_a, agent_b = load_agents(args)
     convert_to_chat_html(agent_a, agent_b, outfile=os.path.join(args.out_dir, 'sessions.html'), use_events=False, img_dir=args.out_dir)
@@ -899,6 +966,7 @@ def main():
                 export_payload['sessions'].append({
                     'session_id': int(sid),
                     'date_time': agent_a.get(f'session_{sid}_date_time'),
+                    'topic': agent_a.get(f'session_{sid}_topic'),
                     'dialog': simplified_dialog,
                     'facts': agent_a.get(f'session_{sid}_facts'),
                     'reflection': agent_a.get(f'session_{sid}_reflection'),

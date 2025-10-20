@@ -153,6 +153,13 @@ def convert_to_chat_html(speaker_1, speaker_2, outfile="", use_events=False, img
             raise ValueError
         
         body += date_time_div % ("Session %s [ %s ]" % (num, date_time_string))
+        # Show session topic if available
+        try:
+            topic = speaker_1.get('session_%s_topic' % num)
+            if topic:
+                body += rel_div % ("<b>Topic</b>: " + str(topic))
+        except Exception:
+            pass
 
         # Show relationships if available (written on agent_a side)
         rel = speaker_1.get('session_%s_relationships' % num)

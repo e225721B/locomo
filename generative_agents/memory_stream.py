@@ -137,7 +137,8 @@ class MemoryStore:
             self.add_memory(text=text, created_at=session_date, source_type='reflection')
             count += 1
         return count
-
+    
+    #
     # ---------- retrieval ----------
     #Relevance（関連性）
     @staticmethod
@@ -154,7 +155,7 @@ class MemoryStore:
     
     #最終スコア計算(書かれているのはデフォルト値)
     def retrieve(self, query_text: str, topk: int = 5, now_date: Optional[str] = None,
-                 w_sim: float = 0.6, w_imp: float = 0.25, w_rec: float = 0.15) -> List[Dict[str, Any]]:
+                 w_sim: float = 0.9, w_imp: float = 0.25, w_rec: float = 0.15) -> List[Dict[str, Any]]:
         if not self.entries or not query_text:
             return []
         try:
