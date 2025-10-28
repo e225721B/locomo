@@ -482,38 +482,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             except Exception as e:
                 logging.warning(f"Failed to compute intra-session relationships at turn {i}: {e}")
 
-        # --- Pre-turn reflection: the listener of the previous utterance (i>0) reflects before replying ---
-        if args.reflection and args.reflection_every_turn and i > 0:
-            try:
-                # Save partial session so far for reflection context
-                agent_a[f'session_{curr_sess_id}'] = session
-                agent_b[f'session_{curr_sess_id}'] = session
-                refl_all = get_session_reflection(args, agent_a, agent_b, curr_sess_id)
-                if curr_speaker == 0:
-                    # Agent A is about to speak; reflect for A only
-                    agent_a[f'session_{curr_sess_id}_reflection'] = refl_all['a']
-                    # store into A's memory stream for retrieval
-                    if args.memory_stream and mem_a is not None:
-                        sess_date = agent_a.get('session_%s_date_time' % curr_sess_id)
-                        mem_a.add_from_reflections(refl_all['a'].get('self', []) or [], session_date=sess_date, about='self')
-                        mem_a.add_from_reflections(refl_all['a'].get('other', []) or [], session_date=sess_date, about='other')
-                        mem_a.save(); save_agents([agent_a, agent_b], args)
-                    a_self = (refl_all['a'].get('self') or [])
-                    a_other = (refl_all['a'].get('other') or [])
-                    logging.info(f"（内省者：）{agent_a['name']} reflects -> self:{len(a_self)}, other:{len(a_other)}")
-                else:
-                    # Agent B is about to speak; reflect for B only
-                    agent_b[f'session_{curr_sess_id}_reflection'] = refl_all['b']
-                    if args.memory_stream and mem_b is not None:
-                        sess_date = agent_b.get('session_%s_date_time' % curr_sess_id)
-                        mem_b.add_from_reflections(refl_all['b'].get('self', []) or [], session_date=sess_date, about='self')
-                        mem_b.add_from_reflections(refl_all['b'].get('other', []) or [], session_date=sess_date, about='other')
-                        mem_b.save(); save_agents([agent_a, agent_b], args)
-                    b_self = (refl_all['b'].get('self') or [])
-                    b_other = (refl_all['b'].get('other') or [])
-                    logging.info(f"（内省者：）{agent_b['name']} reflects -> self:{len(b_self)}, other:{len(b_other)}")
-            except Exception as e:
-                logging.warning(f"Pre-turn reflection failed at turn {i}: {e}")
+        # （変更）ターン開始時の内省は行わない
 
         if curr_speaker == 0:
             # Memory retrieval for Agent A's turn
@@ -546,6 +515,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 memory_snippet=mem_snip,
                 topic=session_topic
             )
+            # （削除）詳細トレースは出力しない
         else:
             mem_snip = None
             if args.memory_stream and mem_b is not None:
@@ -574,6 +544,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 memory_snippet=mem_snip,
                 topic=session_topic
             )
+            # （削除）詳細トレースは出力しない
 
         # 画像関連機能無効化 (placeholder)
         # if args.image_search ...
@@ -601,35 +572,87 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 各ターンのリトリーブ結果（テキスト配列）を保存（エクスポート用）
         output["retrieved"] = retrieved_texts_for_turn or []
         session.append(output)
+        # --- export minimal per-turn trace (utterance + retrieved) ---
+        try:
+            trace_path = os.path.join(args.out_dir, f'prompt_trace_session_{curr_sess_id}.jsonl')
+            minimal = {
+                'session_id': curr_sess_id,
+                'turn': i,
+                'speaker': output.get('speaker'),
+                'utterance': output.get('clean_text', ''),
+                'retrieved_texts': output.get('retrieved', [])
+            }
+            with open(trace_path, 'a', encoding='utf-8') as tf:
+                tf.write(json.dumps(minimal, ensure_ascii=False) + "\n")
+        except Exception as _e:
+            logging.debug(f"Failed to append minimal prompt trace: {_e}")
 
-        # もし、メモリストリームが有効なら、発話を記憶として追加し、各エージェントの importance を更新
+        # もし、メモリストリームが有効なら、発話を両エージェントのメモリにミラー保存し、importantce 統計は話した側のみ更新
         if args.memory_stream:
             try:
-                target_stats = None
-                if curr_speaker == 0 and mem_a is not None:
-                    m_entry = mem_a.add_memory(text=output["clean_text"], created_at=curr_date_time_string, source_type='conversation')
-                    target_stats = stats_a
-                elif curr_speaker == 1 and mem_b is not None:
-                    m_entry = mem_b.add_memory(text=output["clean_text"], created_at=curr_date_time_string, source_type='conversation')
-                    target_stats = stats_b
-                else:
-                    m_entry = None
-                if m_entry and target_stats is not None:
-                    imp = int(m_entry.get('importance', 0))
-                    target_stats['cumulative_total'] += imp
-                    rw = target_stats['recent_window']
+                # 話者名を明示したテキストで保存して、後段の検索時に誰の発話か判別しやすくする
+                entry_text = f"{output['speaker']}: {output['clean_text']}".strip()
+                # 両エージェントへミラー保存
+                m_a = mem_a.add_memory(text=entry_text, created_at=curr_date_time_string, source_type='conversation') if mem_a is not None else None
+                m_b = mem_b.add_memory(text=entry_text, created_at=curr_date_time_string, source_type='conversation') if mem_b is not None else None
+
+                # 重要度統計（early reflection トリガ）は従来通り「発話した側」のみ更新
+                if curr_speaker == 0 and m_a is not None:
+                    imp = int(m_a.get('importance', 0))
+                    stats_a['cumulative_total'] += imp
+                    rw = stats_a['recent_window']
                     rw.append(imp)
                     if len(rw) > RECENT_WINDOW_SIZE:
                         rw.pop(0)
-                    # ログ: 両エージェントの合計と直近窓サマリ
-                    recent_sum_a = sum(stats_a['recent_window'])
-                    recent_sum_b = sum(stats_b['recent_window'])
+                elif curr_speaker == 1 and m_b is not None:
+                    imp = int(m_b.get('importance', 0))
+                    stats_b['cumulative_total'] += imp
+                    rw = stats_b['recent_window']
+                    rw.append(imp)
+                    if len(rw) > RECENT_WINDOW_SIZE:
+                        rw.pop(0)
+
+                # エージェント辞書へ反映（ファイル保存は既存の save_agents タイミングに委ねる）
+                if mem_a is not None:
+                    mem_a.save()
+                if mem_b is not None:
+                    mem_b.save()
             except Exception as e:
                 logging.warning(f"Failed to add dialog memory for dynamic reflection trigger: {e}")
 
-        # Per-turn reflection is handled pre-turn (as listener), so skip here
+        # Per-turn reflection（変更後）: ターン終了後に「次に話す側（リスナー）」が内省する
         if args.reflection and args.reflection_every_turn:
-            pass
+            try:
+                # セッション進行状況を保存
+                agent_a[f'session_{curr_sess_id}'] = session
+                agent_b[f'session_{curr_sess_id}'] = session
+                # 次の発話者（リスナー）を判定: 直後に curr_speaker がトグルされるため、
+                # ここでは現時点の curr_speaker が「今話した側」。次に話すのは not curr_speaker。
+                next_is_a = (curr_speaker == 1)  # 今話したのがBなら次はA、今話したのがAなら次はB
+                # 片側のみ生成: 次に話す側のみ
+                refl_all = get_session_reflection(args, agent_a, agent_b, curr_sess_id, target='a' if next_is_a else 'b')
+                if next_is_a:
+                    agent_a[f'session_{curr_sess_id}_reflection'] = refl_all['a']
+                    if args.memory_stream and mem_a is not None:
+                        sess_date = agent_a.get('session_%s_date_time' % curr_sess_id)
+                        mem_a.add_from_reflections(refl_all['a'].get('self', []) or [], session_date=sess_date, about='self')
+                        mem_a.add_from_reflections(refl_all['a'].get('other', []) or [], session_date=sess_date, about='other')
+                        mem_a.save(); save_agents([agent_a, agent_b], args)
+                    a_self = (refl_all['a'].get('self') or [])
+                    a_other = (refl_all['a'].get('other') or [])
+                    logging.info(f"（内省者：次に話す側）{agent_a['name']} reflects -> self:{len(a_self)}, other:{len(a_other)}")
+                else:
+                    agent_b[f'session_{curr_sess_id}_reflection'] = refl_all['b']
+                    if args.memory_stream and mem_b is not None:
+                        sess_date = agent_b.get('session_%s_date_time' % curr_sess_id)
+                        mem_b.add_from_reflections(refl_all['b'].get('self', []) or [], session_date=sess_date, about='self')
+                        mem_b.add_from_reflections(refl_all['b'].get('other', []) or [], session_date=sess_date, about='other')
+                        mem_b.save(); save_agents([agent_a, agent_b], args)
+                    b_self = (refl_all['b'].get('self') or [])
+                    b_other = (refl_all['b'].get('other') or [])
+                    logging.info(f"（内省者：次に話す側）{agent_b['name']} reflects -> self:{len(b_self)}, other:{len(b_other)}")
+            except Exception as e:
+                logging.warning(f"Post-turn reflection failed at turn {i}: {e}")
         else:
             # Early reflection trigger (per-agent recent sums) if per-turn not active
             if (not early_reflection_done and args.reflection and args.reflection_importance_threshold > 0 and i >= 2):
@@ -644,7 +667,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     try:
                         agent_a[f'session_{curr_sess_id}'] = session
                         agent_b[f'session_{curr_sess_id}'] = session
-                        refl = get_session_reflection(args, agent_a, agent_b, curr_sess_id)
+                        # 片側のみ生成: トリガになった側だけ
+                        refl = get_session_reflection(args, agent_a, agent_b, curr_sess_id, target=('a' if trigger_agent == 'A' else 'b'))
                         agent_a[f'session_{curr_sess_id}_reflection'] = refl['a']
                         agent_b[f'session_{curr_sess_id}_reflection'] = refl['b']
                         # 詳細ログ＋トレース
@@ -861,12 +885,14 @@ def main():
                     except Exception as e:
                         logging.warning(f"Failed to add facts to memory stream: {e}")
 
-        if args.reflection and (('session_%s_reflection' % j not in agent_a) or args.overwrite_session):
+        # セッション終了時の内省は、毎ターン内省フラグ（--reflection-every-turn）が有効な場合のみ実行
+        if (args.reflection and args.reflection_every_turn) and (('session_%s_reflection' % j not in agent_a) or args.overwrite_session):
                 # 早期反省(early reflection)が既に生成済みならスキップ（上書き要求がある場合を除く）
                 if ('session_%s_reflection' % j in agent_a) and not args.overwrite_session:
                     pass
                 else:
-                    reflections = get_session_reflection(args, agent_a, agent_b, j)
+                    # セッション終了時の最終内省は両側生成（従来互換）
+                    reflections = get_session_reflection(args, agent_a, agent_b, j, target='both')
                     agent_a['session_%s_reflection' % j] = reflections['a']
                     agent_b['session_%s_reflection' % j] = reflections['b']
                     print(" --------- Session %s Reflection for Agent A---------" % (j))
@@ -899,6 +925,10 @@ def main():
                         save_agents([agent_a, agent_b], args)
                     except Exception as e:
                         logging.warning(f"Failed to add reflections to memory stream: {e}")
+        else:
+            # ログ: 毎ターン内省が無効なため、セッション終了時の内省もスキップ
+            if args.reflection and not args.reflection_every_turn:
+                logging.info(f"[reflection] --reflection-every-turn が未指定のため、Session {j} の終了時内省は実行されません")
 
         if args.summary and ('session_%s_summary' % j not in agent_a or args.overwrite_session):
 

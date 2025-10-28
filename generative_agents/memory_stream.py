@@ -152,10 +152,42 @@ class MemoryStore:
         if na == 0 or nb == 0:
             return 0.0
         return float(np.dot(va, vb) / (na * nb))
-    
-    #最終スコア計算(書かれているのはデフォルト値)
     def retrieve(self, query_text: str, topk: int = 5, now_date: Optional[str] = None,
-                 w_sim: float = 0.9, w_imp: float = 0.25, w_rec: float = 0.15) -> List[Dict[str, Any]]:
+                 w_sim: float = 0.6, w_imp: float = 0.25, w_rec: float = 0.15) -> List[Dict[str, Any]]:
+        """
+        メモリストリームから上位 Top-K 件を取得します（類似度・重要度・再近性の合成スコア）。
+        Args:
+            query_text (str):
+                クエリとなるテキスト（例: 直前の相手の発話やペルソナ文）。
+                空文字または None の場合は空リストを返します。
+                
+            topk (int, default=5):
+                返却するメモリエントリの件数（最低1）。
+                
+            now_date (Optional[str]):
+                「現在時刻」として扱う日時の文字列。日付/ISO 形式のいずれかを想定。
+                例: "%d %B, %Y", "%d %B %Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"。
+                指定がない場合は UTC 現在時刻を用います。
+                
+            w_sim (float, default=0.6):
+                類似度（クエリ埋め込みとメモリ埋め込みのコサイン類似度）の重み。
+                値を上げると意味的な近さをより重視します。
+                
+            w_imp (float, default=0.25):
+                重要度（1〜10 を 0.1〜1.0 に正規化）の重み。
+                値を上げると「重要度の高い記憶」を優先します。
+                
+            w_rec (float, default=0.15):
+                再近性（新しさ）の重み。再近性は recency = 0.995 ** hours で計算します（hours は経過時間[時間]）。
+                値を下げると時間距離の影響が弱まり、古い記憶も残りやすくなります。
+
+        Returns:
+            List[Dict[str, Any]]: スコア順に上位 Top-K のメモリエントリ辞書を返します。
+
+        備考:
+            - 時間距離の影響をさらに弱めたい場合は、w_rec を小さくするほか、recency 計算式の底（0.995）や
+              時間スケール（hours を hours/24.0 など）を調整する方法もあります。
+        """
         if not self.entries or not query_text:
             return []
         try:

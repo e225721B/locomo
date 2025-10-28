@@ -8,6 +8,7 @@ import pickle as pkl
 import random
 import unicodedata
 import difflib
+from typing import List, Dict, Any, Tuple
 logging.basicConfig(level=logging.INFO)
 
 
@@ -20,25 +21,34 @@ SELF_REFLECTION_INIT_PROMPT_EN = "{}\n\nGiven the information above, what are th
 
 SELF_REFLECTION_CONTINUE_PROMPT_EN = "{} has the following insights about self.{}\n\n{}\n\nGiven the information above, what are the three most salient insights that {} has about self now? Give concise answers in the form of a json list where each entry is a string."
 
-#内省時プロンプト
-REFLECTION_INIT_PROMPT_JA = (
-    "{}\n\n上の情報に基づき、{} が {} について持っている最も重要な洞察を3つ挙げてください。"
-    "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）だけを返してください。"
-)
-
-REFLECTION_CONTINUE_PROMPT_JA = (
+#内省プロンプト
+REFLECTION_PROMPT_JA = (
     "{} はこれまでのやり取りから {} について次の洞察を持っています。{}\n\n"
     "次の会話は以下です:\n\n{}\n\n"
     "上の情報に基づき、{} が {} について今持っている最も重要な洞察を3つ挙げてください。"
     "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）のみを返してください。"
 )
 
-SELF_REFLECTION_INIT_PROMPT_JA = (
+# 高レベル質問生成用プロンプト（EN/JA）
+HL_QUESTIONS_PROMPT_EN = (
+    "From the following RECENT MEMORIES (including conversations and reflections), propose the three most important high-level questions that could be answered about the people and events mentioned.\n"
+    "Return ONLY a JSON array of exactly three strings. No extra text.\n\nRECENT MEMORIES:\n{mems}\n"
+)
+
+HL_QUESTIONS_PROMPT_JA = (
+    "次の直近のメモリ（会話・気づきを含む）のみを根拠として、その中に登場する人物や出来事について答えられる最も重要な高レベルの質問を3つ挙げてください。\n"
+    "出力は JSON 配列（要素は文字列）『のみ』で、ちょうど3件返してください。余計な文章は書かないでください。\n\n直近メモリ:\n{mems}\n"
+)
+
+
+#自分自身への内省プロンプト
+SELF_REFLECTION_PROMPT_JA = (
     "{}\n\n上の情報に基づき、{} が自分自身について持っている最も重要な洞察を3つ挙げてください。"
     "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）のみを返してください。"
 )
 
-SELF_REFLECTION_CONTINUE_PROMPT_JA = (
+#相手への内省プロンプト
+OTHER_REFLECTION_PROMPT_JA = (
     "{} は自分自身について次の洞察を持っています。{}\n\n{}\n\n"
     "上の情報に基づき、{} が自分自身について今持っている最も重要な洞察を3つ挙げてください。"
     "各項目は短い日本語の文とし、JSON 配列（各要素は文字列）のみを返してください。"
@@ -47,6 +57,7 @@ SELF_REFLECTION_CONTINUE_PROMPT_JA = (
 
 CONVERSATION2FACTS_PROMPT_EN = """
 Write a concise and short list of all possible OBSERVATIONS about each speaker that can be gathered from the CONVERSATION. Each dialog in the conversation contains a dialogue id within square brackets. Each observation should contain a piece of information about the speaker, and also include the dialog id of the dialogs from which the information is taken. The OBSERVATIONS should be objective factual information about the speaker that can be used as a database about them. Avoid abstract observations about the dynamics between the two speakers such as 'speaker is supportive', 'speaker appreciates' etc. Do not leave out any information from the CONVERSATION. Escape all double-quote characters within string output with backslash.\n\nReturn ONLY a valid JSON object: {"<SpeakerName>": [["observation", "D1:1"], ...], "<SpeakerName2>": [...] }. No prose outside JSON.\n"""
+
 
 CONVERSATION2FACTS_PROMPT_JA = """
 以下のCONVERSATIONから各話者について得られる客観的な観察事実(OBSERVATIONS)を漏れなく簡潔に列挙してください。各発話には角括弧内にダイアログIDがあります。各観察は: ["観察内容", "D1:番号"(必要なら複数)] の形で、観察内容はその話者に関する客観的事実に限定し、感情的・抽象的評価(例: 支えている / 感謝している 等)は除外してください。引用符はバックスラッシュでエスケープしてください。\n\n重要: 観察内容の文章は必ず自然な日本語で記述してください（英語で書かないこと）。JSON のキー（話者名）は、CONVERSATION に現れる話者名をそのまま完全一致で使い、翻訳や敬称の付与・省略・変更をしないでください。ダイアログIDの表記も元のまま使用してください。\n\n出力は JSON オブジェクトのみ: {"<話者名>": [["観察", "D1:1"], ...], "<別の話者名>": [...] } 。JSON 以外の文章は書かないでください。\n"""
@@ -206,77 +217,365 @@ def get_session_facts(args, agent_a, agent_b, session_idx, return_embeddings=Tru
     return facts
 
 #内省を生成させるために情報を投げる関数
-def get_session_reflection(args, agent_a, agent_b, session_idx):
+def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'both'):
+    # --- New: Evidence-driven reflection using recent memories ---
+    lang = getattr(args, 'lang', 'en')
 
+    def _collect_recent_memories(limit: int = 10) -> List[Dict[str, Any]]:
+        """両エージェントのメモリストリーム（memory_stream）から直近のメモリエントリを収集する。
+        source_type は 'conversation' と 'reflection' を優先する。フォールバックとして、
+        現在のセッションのダイアログと直近のリフレクションからエントリを構築する。
+        戻り値は次のフィールドを持つエントリのリスト：
+        text、created_at（ISO 文字列）、source、speaker（任意）。"""
+        entries: List[Dict[str, Any]] = []
+        def _from_stream(agent):
+            ms = agent.get('memory_stream') or []
+            for e in ms:
+                try:
+                    st = (e.get('source_type') or e.get('source') or '')
+                    if st not in ('conversation', 'reflection'):
+                        continue
+                    entries.append({
+                        'text': e.get('text',''),
+                        'created_at': e.get('created_at') or e.get('last_accessed_at') or datetime.utcnow().isoformat(),
+                        'importance': int(e.get('importance', 5)),
+                        'embedding': e.get('embedding') or [],
+                        'source': st,
+                        'who': agent.get('name')
+                    })
+                except Exception:
+                    continue
+        # 反省する対象に応じて収集範囲を限定（'both' の場合は従来通り両者）
+        if target == 'a':
+            _from_stream(agent_a)
+        elif target == 'b':
+            _from_stream(agent_b)
+        else:
+            _from_stream(agent_a)
+            _from_stream(agent_b)
+        if not entries:
+            # Fallback: use current session dialogues + previous reflections (if any)
+            try:
+                # フォールバック時も primary を target に応じて選ぶ
+                primary = agent_a if target != 'b' else agent_b
+                sess = primary.get('session_%s' % session_idx) or []
+                sess_date = primary.get('session_%s_date_time' % session_idx) or datetime.utcnow().strftime('%d %B, %Y')
+                for d in sess:
+                    entries.append({
+                        'text': d.get('clean_text') or d.get('text',''),
+                        'created_at': sess_date,
+                        'importance': 5,
+                        'embedding': [],
+                        'source': 'conversation',
+                        'who': d.get('speaker')
+                    })
+                if session_idx > 1:
+                    prev = primary.get('session_%s_reflection' % (session_idx-1)) or {}
+                    for s in (prev.get('self') or []):
+                        entries.append({'text': str(s), 'created_at': sess_date, 'importance': 6, 'embedding': [], 'source': 'reflection', 'who': primary.get('name')})
+                    for s in (prev.get('other') or []):
+                        entries.append({'text': str(s), 'created_at': sess_date, 'importance': 6, 'embedding': [], 'source': 'reflection', 'who': primary.get('name')})
+            except Exception:
+                pass
+        # sort by created_at desc (best-effort)
+        def _to_dt(s):
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                try:
+                    # try formats used elsewhere
+                    for fmt in ("%d %B, %Y", "%d %B %Y", "%Y-%m-%d"):
+                        return datetime.strptime(s, fmt)
+                except Exception:
+                    return datetime.utcnow()
+        entries.sort(key=lambda x: _to_dt(x.get('created_at') or ''), reverse=True)
+        return entries[:limit]
 
-    # Step 1: get conversation
+    def _gen_questions(recent_texts: List[str]) -> List[str]:
+        joined = '\n- '.join([t for t in recent_texts if t])
+        prompt = (HL_QUESTIONS_PROMPT_JA if lang == 'ja' else HL_QUESTIONS_PROMPT_EN).format(mems='- ' + joined)
+        qs = run_json_trials(prompt, model='chatgpt', num_tokens_request=280)
+        if isinstance(qs, dict):
+            qs = list(qs.values())
+        if not isinstance(qs, list):
+            qs = []
+        # keep 3
+        out = []
+        for q in qs:
+            if isinstance(q, str) and q.strip():
+                out.append(q.strip())
+            if len(out) >= 3:
+                break
+        while len(out) < 3:
+            out.append( ("質問" if lang=='ja' else "Question") + f" {len(out)+1}")
+        return out[:3]
+
+    def _embed_list(texts: List[str]) -> List[List[float]]:
+        try:
+            vecs = get_openai_embedding(texts, RETRIEVAL_MODEL)
+            return [list(map(float, v)) for v in vecs]
+        except Exception:
+            return [[] for _ in texts]
+
+    def _cos(a: List[float], b: List[float]) -> float:
+        if not a or not b:
+            return 0.0
+        va = np.array(a, dtype=float)
+        vb = np.array(b, dtype=float)
+        na = np.linalg.norm(va); nb = np.linalg.norm(vb)
+        if na == 0 or nb == 0:
+            return 0.0
+        return float(np.dot(va, vb) / (na * nb))
+
+    def _minmax(xs: List[float]) -> List[float]:
+        if not xs:
+            return []
+        mn = min(xs); mx = max(xs)
+        if mx - mn < 1e-9:
+            return [0.5 for _ in xs]
+        return [(x - mn) / (mx - mn) for x in xs]
+
+    def _score_and_select(entries: List[Dict[str, Any]], questions: List[str], now_dt: datetime) -> Tuple[List[Dict[str, Any]], List[str]]:
+        # ensure embeddings for entries
+        for e in entries:
+            if not e.get('embedding'):
+                try:
+                    e['embedding'] = get_openai_embedding([e.get('text','')], RETRIEVAL_MODEL)[0]
+                except Exception:
+                    e['embedding'] = []
+        q_embs = _embed_list(questions)
+        # raw metrics
+        relevances = []
+        importances = []
+        recencies = []
+        raws = []
+        for e in entries:
+            # relevance: max cosine to any question
+            sim = 0.0
+            for qe in q_embs:
+                sim = max(sim, _cos(list(map(float, e.get('embedding') or [])), qe))
+            relevances.append(sim)
+            # importance: use 1-10 scale
+            imp = float(e.get('importance', 5))
+            importances.append(imp)
+            # recency: exponential decay by hours since created
+            created = e.get('created_at') or now_dt.isoformat()
+            try:
+                cdt = datetime.fromisoformat(created)
+            except Exception:
+                try:
+                    for fmt in ("%d %B, %Y", "%d %B %Y", "%Y-%m-%d"):
+                        cdt = datetime.strptime(created, fmt); break
+                except Exception:
+                    cdt = now_dt
+            hours = max(0.0, (now_dt - cdt).total_seconds() / 3600.0)
+            rec = float(np.power(0.995, hours))
+            recencies.append(rec)
+            raws.append(e)
+        # normalize and combine (equal weights)
+        rel_n = _minmax(relevances)
+        imp_n = _minmax(importances)
+        rec_n = _minmax(recencies)
+        scored = []
+        for i, e in enumerate(raws):
+            score = rel_n[i] + imp_n[i] + rec_n[i]
+            e['relevance_raw'] = relevances[i]
+            e['recency_raw'] = recencies[i]
+            e['importance_raw'] = importances[i]
+            e['rel_n'] = rel_n[i]; e['imp_n'] = imp_n[i]; e['rec_n'] = rec_n[i]
+            e['combined_score'] = score
+            scored.append(e)
+        scored.sort(key=lambda x: x.get('combined_score', 0.0), reverse=True)
+        # format statements with a single numbering across both agents
+        lines: List[str] = []
+        selected: List[Dict[str, Any]] = []
+        char_budget = 2200  # rough safety budget
+        for e in scored:
+            tag = e.get('who') or 'Agent'
+            txt = (e.get('text') or '').strip()
+            line = f"[{tag}] {txt}"
+            # simple budget control
+            if sum(len(l) for l in lines) + len(line) + 10 > char_budget:
+                break
+            selected.append(e)
+            lines.append(line)
+            if len(lines) >= 14:  # hard cap
+                break
+        # numbered strings
+        numbered = [f"{idx+1}. {s}" for idx, s in enumerate(lines)]
+        return selected, numbered
+
+    # Build evidence once per reflection (for both A and B)
+    recent = _collect_recent_memories(limit=10)
+    def _trim(s: str, n: int = 160) -> str:
+        s = s or ''
+        return s if len(s) <= n else (s[:n] + '...')
+    try:
+        # logging.info(f"[hlq] collected recent memories: {len(recent)} items")
+        for idx, e in enumerate(recent[:20]):
+            # logging.info(
+            #     f"[hlq][recent] {idx+1}. who={e.get('who')} src={e.get('source')} date={e.get('created_at')} "
+            #     f"imp={e.get('importance')} text={_trim(e.get('text'))}"
+            # )
+            pass
+        if len(recent) > 20:
+            # logging.info(f"[hlq][recent] ... ({len(recent)-20} more)")
+            pass
+    except Exception:
+        pass
+    recent_texts = [e.get('text','') for e in recent]
+    questions = _gen_questions(recent_texts)
+    try:
+        # logging.info("[hlq] high-level questions (3): " + json.dumps(questions, ensure_ascii=False))
+        for qi, q in enumerate(questions or [], start=1):
+            try:
+                # logging.info(f"[hlq][question] {qi}. {q}")
+                pass
+            except Exception:
+                # logging.info("[hlq][question] %d. %s" % (qi, str(q)))
+                pass
+    except Exception:
+        pass
+    now_dt = datetime.utcnow()
+    selected_entries, numbered_statements = _score_and_select(recent, questions, now_dt)
+    try:
+        # logging.info(f"[hlq] selected evidence lines: {len(numbered_statements)}")
+        for i, (e, line) in enumerate(zip(selected_entries, numbered_statements), start=1):
+            try:
+                score = float(e.get('combined_score', 0.0))
+                reln = float(e.get('rel_n', 0.0))
+                impn = float(e.get('imp_n', 0.0))
+                recn = float(e.get('rec_n', 0.0))
+            except Exception:
+                score = reln = impn = recn = 0.0
+            # logging.info(f"[hlq][evidence] {i}. score={score:.3f} rel={reln:.2f} imp={impn:.2f} rec={recn:.2f} | {line}")
+            pass
+    except Exception:
+        pass
+    # Compose context block to inject into prompts
+    if lang == 'ja':
+        ctx_hdr_q = "高レベルの問い (この3つを検索クエリとして使用):\n- " + "\n- ".join(questions)
+        ctx_hdr_s = "\n\n根拠となるステートメント（番号付き）:\n" + "\n".join(numbered_statements)
+        evidence_block = ctx_hdr_q + ctx_hdr_s
+        cite_note = "\n\n注: 洞察の各項目の末尾に (根拠: 1,5,3) のようにこの番号を必ず付けてください。"
+    else:
+        ctx_hdr_q = "High-level questions (used as retrieval queries):\n- " + "\n- ".join(questions)
+        ctx_hdr_s = "\n\nEvidence statements (numbered):\n" + "\n".join(numbered_statements)
+        evidence_block = ctx_hdr_q + ctx_hdr_s
+        cite_note = "\n\nNote: Append evidence indices like (evidence: 1,5,3) to each insight."
+
+    # Fallback original conversation text (kept in case we want to append)
     conversation = ""
     conversation += agent_a['session_%s_date_time' % session_idx] + '\n'
     for dialog in agent_a['session_%s' % session_idx]:
-        # if 'clean_text' in dialog:
-        #     writer.write(dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"\n')
-        # else:
         conversation += dialog['speaker'] + ' said, \"' + dialog['clean_text'] + '\"\n'
 
 
-    # Step 2: Self-reflections
-    lang = getattr(args, 'lang', 'en')
-    if session_idx == 1:
-        if lang == 'ja':
-            prompt_a = SELF_REFLECTION_INIT_PROMPT_JA.format(conversation, agent_a['name'])
-            prompt_b = SELF_REFLECTION_INIT_PROMPT_JA.format(conversation, agent_b['name'])
-        else:
-            prompt_a = SELF_REFLECTION_INIT_PROMPT_EN.format(conversation, agent_a['name'])
-            prompt_b = SELF_REFLECTION_INIT_PROMPT_EN.format(conversation, agent_b['name'])
-        agent_a_self = run_json_trials(prompt_a, model='chatgpt', num_tokens_request=300)
-        agent_b_self = run_json_trials(prompt_b, model='chatgpt', num_tokens_request=300)
+    # Generate reflections using HL_QUESTIONS + evidence for BOTH directions and SELF
+    # Prepare previous "other" (optional continuity)
+    prev_ab = ''
+    prev_ba = ''
+    if session_idx > 1:
+        try:
+            prev_ab = '\n'.join((agent_a.get('session_%s_reflection' % (session_idx-1), {}) or {}).get('other', []) or [])
+        except Exception:
+            prev_ab = ''
+        try:
+            prev_ba = '\n'.join((agent_b.get('session_%s_reflection' % (session_idx-1), {}) or {}).get('other', []) or [])
+        except Exception:
+            prev_ba = ''
 
+    agent_a_on_b = []
+    agent_b_on_a = []
+    if lang == 'ja':
+        if target in ('a', 'both'):
+            prompt_ab = REFLECTION_PROMPT_JA.format(
+                agent_a['name'], agent_b['name'], prev_ab, evidence_block + cite_note, agent_a['name'], agent_b['name']
+            )
+            agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
+        if target in ('b', 'both'):
+            prompt_ba = REFLECTION_PROMPT_JA.format(
+                agent_b['name'], agent_a['name'], prev_ba, evidence_block + cite_note, agent_b['name'], agent_a['name']
+            )
+            agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
     else:
-        if lang == 'ja':
-            prompt_a = SELF_REFLECTION_CONTINUE_PROMPT_JA.format(
-                agent_a['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_a['name']
-            )
-            prompt_b = SELF_REFLECTION_CONTINUE_PROMPT_JA.format(
-                agent_b['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_b['name']
+        # EN: keep behavior consistent (use INIT if no previous, otherwise CONTINUE)
+        if target in ('a', 'both'):
+            if prev_ab.strip():
+                prompt_ab = REFLECTION_CONTINUE_PROMPT_EN.format(
+                    agent_a['name'], agent_b['name'], prev_ab, evidence_block + cite_note, agent_a['name'], agent_b['name']
+                )
+            else:
+                prompt_ab = REFLECTION_INIT_PROMPT_EN.format(
+                    evidence_block + cite_note, agent_a['name'], agent_b['name']
+                )
+            agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
+        if target in ('b', 'both'):
+            if prev_ba.strip():
+                prompt_ba = REFLECTION_CONTINUE_PROMPT_EN.format(
+                    agent_b['name'], agent_a['name'], prev_ba, evidence_block + cite_note, agent_b['name'], agent_a['name']
+                )
+            else:
+                prompt_ba = REFLECTION_INIT_PROMPT_EN.format(
+                    evidence_block + cite_note, agent_b['name'], agent_a['name']
+                )
+            agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
+
+    # --- Self reflections ---
+    prev_a_self = ''
+    prev_b_self = ''
+    if session_idx > 1:
+        try:
+            prev_a_self = '\n'.join((agent_a.get('session_%s_reflection' % (session_idx-1), {}) or {}).get('self', []) or [])
+        except Exception:
+            prev_a_self = ''
+        try:
+            prev_b_self = '\n'.join((agent_b.get('session_%s_reflection' % (session_idx-1), {}) or {}).get('self', []) or [])
+        except Exception:
+            prev_b_self = ''
+
+    if lang == 'ja':
+        # 初回は SELF_REFLECTION_PROMPT_JA、継続時は OTHER_REFLECTION_PROMPT_JA（名称は紛らわしいが自己継続用）
+        if prev_a_self.strip():
+            prompt_a_self = OTHER_REFLECTION_PROMPT_JA.format(
+                agent_a['name'], prev_a_self, evidence_block + cite_note, agent_a['name']
             )
         else:
-            prompt_a = SELF_REFLECTION_CONTINUE_PROMPT_EN.format(
-                agent_a['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_a['name']
+            prompt_a_self = SELF_REFLECTION_PROMPT_JA.format(
+                evidence_block + cite_note, agent_a['name']
             )
-            prompt_b = SELF_REFLECTION_CONTINUE_PROMPT_EN.format(
-                agent_b['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['self']), conversation, agent_b['name']
+        if prev_b_self.strip():
+            prompt_b_self = OTHER_REFLECTION_PROMPT_JA.format(
+                agent_b['name'], prev_b_self, evidence_block + cite_note, agent_b['name']
             )
-        agent_a_self = run_json_trials(prompt_a, model='chatgpt', num_tokens_request=300)
-        agent_b_self = run_json_trials(prompt_b, model='chatgpt', num_tokens_request=300)
-
-    # Step 3: Reflection about other speaker
-    if session_idx == 1:
-        if lang == 'ja':
-            prompt_ab = REFLECTION_INIT_PROMPT_JA.format(conversation, agent_a['name'], agent_b['name'])
-            prompt_ba = REFLECTION_INIT_PROMPT_JA.format(conversation, agent_b['name'], agent_a['name'])
         else:
-            prompt_ab = REFLECTION_INIT_PROMPT_EN.format(conversation, agent_a['name'], agent_b['name'])
-            prompt_ba = REFLECTION_INIT_PROMPT_EN.format(conversation, agent_b['name'], agent_a['name'])
-        agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
-        agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
-
+            prompt_b_self = SELF_REFLECTION_PROMPT_JA.format(
+                evidence_block + cite_note, agent_b['name']
+            )
     else:
-        if lang == 'ja':
-            prompt_ab = REFLECTION_CONTINUE_PROMPT_JA.format(
-                agent_a['name'], agent_b['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_a['name'], agent_b['name']
-            )
-            prompt_ba = REFLECTION_CONTINUE_PROMPT_JA.format(
-                agent_b['name'], agent_a['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_b['name'], agent_a['name']
+        if prev_a_self.strip():
+            prompt_a_self = SELF_REFLECTION_CONTINUE_PROMPT_EN.format(
+                agent_a['name'], prev_a_self, evidence_block + cite_note, agent_a['name']
             )
         else:
-            prompt_ab = REFLECTION_CONTINUE_PROMPT_EN.format(
-                agent_a['name'], agent_b['name'], '\n'.join(agent_a['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_a['name'], agent_b['name']
+            prompt_a_self = SELF_REFLECTION_INIT_PROMPT_EN.format(
+                evidence_block + cite_note, agent_a['name']
             )
-            prompt_ba = REFLECTION_CONTINUE_PROMPT_EN.format(
-                agent_b['name'], agent_a['name'], '\n'.join(agent_b['session_%s_reflection' % (session_idx-1)]['other']), conversation, agent_b['name'], agent_a['name']
+        if prev_b_self.strip():
+            prompt_b_self = SELF_REFLECTION_CONTINUE_PROMPT_EN.format(
+                agent_b['name'], prev_b_self, evidence_block + cite_note, agent_b['name']
             )
-        agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
-        agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
+        else:
+            prompt_b_self = SELF_REFLECTION_INIT_PROMPT_EN.format(
+                evidence_block + cite_note, agent_b['name']
+            )
+
+    agent_a_self = []
+    agent_b_self = []
+    if target in ('a', 'both'):
+        agent_a_self = run_json_trials(prompt_a_self, model='chatgpt', num_tokens_request=300)
+    if target in ('b', 'both'):
+        agent_b_self = run_json_trials(prompt_b_self, model='chatgpt', num_tokens_request=300)
 
     if type(agent_a_self) == dict:
         agent_a_self = list(agent_a_self.values())
@@ -288,8 +587,11 @@ def get_session_reflection(args, agent_a, agent_b, session_idx):
         agent_b_on_a = list(agent_b_on_a.values())  
 
     reflections = {}
-    reflections['a'] = {'self': agent_a_self, 'other': agent_a_on_b}
-    reflections['b'] = {'self': agent_b_self, 'other': agent_b_on_a}
+    # make sure to keep schema; fill empty lists for the non-target side
+    reflections['a'] = {'self': agent_a_self if target in ('a', 'both') else [],
+                        'other': agent_a_on_b if target in ('a', 'both') else []}
+    reflections['b'] = {'self': agent_b_self if target in ('b', 'both') else [],
+                        'other': agent_b_on_a if target in ('b', 'both') else []}
 
     return reflections
 
@@ -407,7 +709,7 @@ def get_recent_context(agent_a, agent_b, sess_id, context_length=2, reflection=F
 def get_relevant_context(agent_a, agent_b, input_dialogue, embeddings, sess_id, context_length=2, reflection=False):
 
     logging.info("Getting relevant context for response to %s (session %s)" % (input_dialogue, sess_id))
-    contexts_a, context_b = get_recent_context(agent_a, agent_b, sess_id, 10000)
+    contexts_a, context_b = get_recent_context(agent_a, agent_b, sess_id, 10)
     # embeddings = pkl.load(open(emb_file, 'rb'))
     input_embedding = get_embedding([input_dialogue])
     sims_with_context_a = np.dot(embeddings[agent_a['name']], input_embedding[0])
