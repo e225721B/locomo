@@ -12,6 +12,18 @@ from typing import List, Dict, Any, Tuple
 logging.basicConfig(level=logging.INFO)
 
 
+# Helper to safely get embedding (handles numpy arrays)
+def _safe_get_embedding(obj, key='embedding', default=None):
+    """Safely retrieve embedding, returning default if None or empty (works with numpy arrays)."""
+    val = obj.get(key) if isinstance(obj, dict) else None
+    if val is None:
+        return default if default is not None else []
+    # Check if empty (works for list, tuple, numpy array)
+    if hasattr(val, '__len__') and len(val) == 0:
+        return default if default is not None else []
+    return val
+
+
 # Reflection prompts (EN/JA)
 REFLECTION_INIT_PROMPT_EN = "{}\n\nGiven the information above, what are the three most salient insights that {} has about {}? Give concise answers in the form of a json list where each entry is a string."
 
@@ -88,6 +100,28 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
     "{{\"intimacy\":<1-10>,\"power\":<1-10>,\"social_distance\":<1-10>,\"trust\":<1-10>}} \n"
     "JSON以外の文章は書かないでください。\n\n"
     "CONVERSATION（1行目は日付を含む）:\n{conv}\n"
+)
+
+# --- Relationship Reflection (7-point: -3..+3) prompts ---
+RELN_REFLECT_PROMPT_EN = (
+    "You are rating a 7-point relationship reflection FROM {src} TO {dst} using ONLY the numbered EVIDENCE below (and the high-level questions used as retrieval intent).\n"
+    "Rate exactly two dimensions as integers in the closed range -3..+3 (7-point scale):\n"
+    "- Intimacy: degree of closeness/affection {src} feels toward {dst}. Higher means closer.\n"
+    "- Power: perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful/dominant.\n\n"
+    "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
+    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Intimacy\":2,\"Power\":-1}}. No extra text.\n\n"
+    "HIGH-LEVEL QUESTIONS:\n{hlq}\n\nEVIDENCE (numbered):\n{evid}\n"
+)
+
+#関係値を生成させるプロンプト
+RELN_REFLECT_PROMPT_JA = (
+    "以下の高レベル質問と番号付き根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n"
+    "評価する指標は2つです:\n"
+    "- Intimacy: 親密度（{src} が {dst} に対して感じる近しさ・好意の度合い。高いほど親しい）\n"
+    "- Power: 力関係（{src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる）\n\n"
+    "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
+    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Intimacy\":-3..+3,\"Power\":-3..+3}}。JSON 以外の文章は書かないでください。\n\n"
+    "高レベル質問:\n{hlq}\n\n根拠（番号付き）:\n{evid}\n"
 )
 
 
@@ -239,7 +273,7 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
                         'text': e.get('text',''),
                         'created_at': e.get('created_at') or e.get('last_accessed_at') or datetime.utcnow().isoformat(),
                         'importance': int(e.get('importance', 5)),
-                        'embedding': e.get('embedding') or [],
+                        'embedding': _safe_get_embedding(e, 'embedding', []),
                         'source': st,
                         'who': agent.get('name')
                     })
@@ -318,7 +352,14 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
             return [[] for _ in texts]
 
     def _cos(a: List[float], b: List[float]) -> float:
-        if not a or not b:
+        # Safely check for empty embeddings (handles numpy arrays, lists, None)
+        def _is_empty(x):
+            if x is None:
+                return True
+            if hasattr(x, '__len__'):
+                return len(x) == 0
+            return False
+        if _is_empty(a) or _is_empty(b):
             return 0.0
         va = np.array(a, dtype=float)
         vb = np.array(b, dtype=float)
@@ -338,7 +379,10 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
     def _score_and_select(entries: List[Dict[str, Any]], questions: List[str], now_dt: datetime) -> Tuple[List[Dict[str, Any]], List[str]]:
         # ensure embeddings for entries
         for e in entries:
-            if not e.get('embedding'):
+            emb = e.get('embedding')
+            # Handle numpy array, empty list, or None
+            is_empty = emb is None or (isinstance(emb, (list, tuple)) and len(emb) == 0) or (hasattr(emb, '__len__') and len(emb) == 0)
+            if is_empty:
                 try:
                     e['embedding'] = get_openai_embedding([e.get('text','')], RETRIEVAL_MODEL)[0]
                 except Exception:
@@ -352,8 +396,10 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
         for e in entries:
             # relevance: max cosine to any question
             sim = 0.0
+            emb_val = _safe_get_embedding(e, 'embedding', [])
+            emb_floats = list(map(float, emb_val)) if len(emb_val) > 0 else []
             for qe in q_embs:
-                sim = max(sim, _cos(list(map(float, e.get('embedding') or [])), qe))
+                sim = max(sim, _cos(emb_floats, qe))
             relevances.append(sim)
             # importance: use 1-10 scale
             imp = float(e.get('importance', 5))
@@ -405,6 +451,7 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
         numbered = [f"{idx+1}. {s}" for idx, s in enumerate(lines)]
         return selected, numbered
 
+#候補となる証拠を収集し、スコアリングして選択する
     # Build evidence once per reflection (for both A and B)
     recent = _collect_recent_memories(limit=10)
     def _trim(s: str, n: int = 160) -> str:
@@ -452,7 +499,7 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
             pass
     except Exception:
         pass
-    # Compose context block to inject into prompts
+    # 証拠ブロック組み立て
     if lang == 'ja':
         ctx_hdr_q = "高レベルの問い (この3つを検索クエリとして使用):\n- " + "\n- ".join(questions)
         ctx_hdr_s = "\n\n根拠となるステートメント（番号付き）:\n" + "\n".join(numbered_statements)
@@ -594,6 +641,276 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
                         'other': agent_b_on_a if target in ('b', 'both') else []}
 
     return reflections
+
+
+# ---------------- Relationship Reflection (7-point: -3..+3) -----------------
+def _rr_coerce(v):
+    try:
+        x = int(round(float(v)))
+    except Exception:
+        x = 0
+    return max(-3, min(3, x))
+
+def _ensure_rr_schema(obj: dict) -> dict:
+    """Ensure new Intimacy/Power keys.
+    Backward compatibility: map old keys if new ones absent."""
+    if not isinstance(obj, dict):
+        obj = {}
+    # backward mapping from legacy dimension names
+    if 'Intimacy' not in obj:
+        if 'attentiveness' in obj:
+            obj['Intimacy'] = obj.get('attentiveness')
+        elif 'Politeness' in obj:
+            obj['Intimacy'] = obj.get('Politeness')
+    if 'Power' not in obj:
+        if 'positivity' in obj:
+            obj['Power'] = obj.get('positivity')
+        elif 'Self-Disclosure' in obj:
+            obj['Power'] = obj.get('Self-Disclosure')
+    return {
+        'Intimacy': _rr_coerce(obj.get('Intimacy', 0)),
+        'Power': _rr_coerce(obj.get('Power', 0)),
+    }
+
+def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str = 'both'):
+    """Compute 7-point (-3..+3) relationship reflection vector using HLQ + evidence pipeline.
+    Returns dict:
+      {
+        'a_to_b': {Intimacy, Power},
+        'b_to_a': {...},
+        'by_speaker': { A_name: {toward: B_name, vector:{...}}, B_name: {...} }
+      }
+    target: 'a' | 'b' | 'both'
+    """
+    lang = getattr(args, 'lang', 'en')
+
+    # Collect recent memories (same policy as reflections)
+    def _collect(limit: int = 10):
+        entries: List[Dict[str, Any]] = []
+        def _from(agent):
+            ms = agent.get('memory_stream') or []
+            for e in ms:
+                st = (e.get('source_type') or e.get('source') or '')
+                if st not in ('conversation', 'reflection'):
+                    continue
+                entries.append({
+                    'text': e.get('text',''),
+                    'created_at': e.get('created_at') or e.get('last_accessed_at') or datetime.utcnow().isoformat(),
+                    'importance': int(e.get('importance',5)),
+                    'embedding': _safe_get_embedding(e, 'embedding', []),
+                    'source': st,
+                    'who': agent.get('name')
+                })
+        if target == 'a':
+            _from(agent_a)
+        elif target == 'b':
+            _from(agent_b)
+        else:
+            _from(agent_a); _from(agent_b)
+        if not entries:
+            primary = agent_a if target != 'b' else agent_b
+            sess = primary.get(f'session_{session_idx}') or []
+            sess_date = primary.get(f'session_{session_idx}_date_time') or datetime.utcnow().strftime('%d %B, %Y')
+            for d in sess:
+                entries.append({
+                    'text': d.get('clean_text') or d.get('text',''),
+                    'created_at': sess_date,
+                    'importance': 5,
+                    'embedding': [],
+                    'source': 'conversation',
+                    'who': d.get('speaker')
+                })
+        def _to_dt(s):
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                for fmt in ("%d %B, %Y", "%d %B %Y", "%Y-%m-%d"):
+                    try:
+                        return datetime.strptime(s, fmt)
+                    except Exception:
+                        pass
+            return datetime.utcnow()
+        entries.sort(key=lambda x: _to_dt(x.get('created_at') or ''), reverse=True)
+        return entries[:limit]
+
+    def _embed_list(texts: List[str]):
+        try:
+            vecs = get_openai_embedding(texts, RETRIEVAL_MODEL)
+            return [list(map(float, v)) for v in vecs]
+        except Exception:
+            return [[] for _ in texts]
+
+    def _cos(a, b):
+        # Safely check for empty embeddings (handles numpy arrays, lists, None)
+        def _is_empty(x):
+            if x is None:
+                return True
+            if hasattr(x, '__len__'):
+                return len(x) == 0
+            return False
+        if _is_empty(a) or _is_empty(b):
+            return 0.0
+        va = np.array(a, dtype=float); vb = np.array(b, dtype=float)
+        na = np.linalg.norm(va); nb = np.linalg.norm(vb)
+        if na == 0 or nb == 0:
+            return 0.0
+        return float(np.dot(va, vb)/(na*nb))
+
+    def _minmax(xs):
+        if not xs:
+            return []
+        mn, mx = min(xs), max(xs)
+        if mx - mn < 1e-9:
+            return [0.5 for _ in xs]
+        return [(x-mn)/(mx-mn) for x in xs]
+
+    recent = _collect(limit=10)
+    recent_texts = [e.get('text','') for e in recent]
+    # HLQ generation
+    joined = '\n- '.join([t for t in recent_texts if t])
+    hl_prompt = (HL_QUESTIONS_PROMPT_JA if lang=='ja' else HL_QUESTIONS_PROMPT_EN).format(mems='- ' + joined)
+    qs = run_json_trials(hl_prompt, model='chatgpt', num_tokens_request=250)
+    if isinstance(qs, dict):
+        qs = list(qs.values())
+    if not isinstance(qs, list):
+        qs = []
+    hlq = []
+    for q in qs:
+        if isinstance(q, str) and q.strip():
+            hlq.append(q.strip())
+        if len(hlq) >= 3:
+            break
+    while len(hlq) < 3:
+        hlq.append(('質問' if lang=='ja' else 'Question') + f' {len(hlq)+1}')
+    # Evidence selection
+    for e in recent:
+        emb = e.get('embedding')
+        # Handle numpy array, empty list, or None
+        is_empty = emb is None or (isinstance(emb, (list, tuple)) and len(emb) == 0) or (hasattr(emb, '__len__') and len(emb) == 0)
+        if is_empty:
+            try:
+                e['embedding'] = get_openai_embedding([e.get('text','')], RETRIEVAL_MODEL)[0]
+            except Exception:
+                e['embedding'] = []
+    q_embs = _embed_list(hlq)
+    relevances=[]; importances=[]; recencies=[]; raws=[]
+    now_dt = datetime.utcnow()
+    for e in recent:
+        sim = 0.0
+        emb_val = _safe_get_embedding(e, 'embedding', [])
+        emb_floats = list(map(float, emb_val)) if len(emb_val) > 0 else []
+        for qe in q_embs:
+            sim = max(sim, _cos(emb_floats, qe))
+        relevances.append(sim)
+        importances.append(float(e.get('importance',5)))
+        created = e.get('created_at') or now_dt.isoformat()
+        try:
+            cdt = datetime.fromisoformat(created)
+        except Exception:
+            cdt = now_dt
+        hours = max(0.0, (now_dt - cdt).total_seconds()/3600.0)
+        recencies.append(float(np.power(0.995, hours)))
+        raws.append(e)
+    rel_n=_minmax(relevances); imp_n=_minmax(importances); rec_n=_minmax(recencies)
+    scored=[]
+    for i,e in enumerate(raws):
+        e['combined_score']=rel_n[i]+imp_n[i]+rec_n[i]
+        scored.append(e)
+    scored.sort(key=lambda x: x.get('combined_score',0.0), reverse=True)
+    lines=[]
+    char_budget=2200
+    for e in scored:
+        tag = e.get('who') or 'Agent'
+        txt = (e.get('text') or '').strip()
+        line=f'[{tag}] {txt}'
+        if sum(len(l) for l in lines)+len(line)+10 > char_budget:
+            break
+        lines.append(line)
+        if len(lines) >= 14:
+            break
+    numbered=[f'{i+1}. {s}' for i,s in enumerate(lines)]
+    hlq_block = '\n- ' + '\n- '.join(hlq)
+    evid_block = '\n'.join(numbered)
+    src_p = (agent_a.get('persona_summary') or '').strip()
+    dst_p = (agent_b.get('persona_summary') or '').strip()
+    if lang=='ja':
+        p_ab = RELN_REFLECT_PROMPT_JA.format(src=agent_a['name'], dst=agent_b['name'], hlq=hlq_block, evid=evid_block, src_persona=src_p, dst_persona=dst_p)
+        p_ba = RELN_REFLECT_PROMPT_JA.format(src=agent_b['name'], dst=agent_a['name'], hlq=hlq_block, evid=evid_block, src_persona=dst_p, dst_persona=src_p)
+    else:
+        p_ab = RELN_REFLECT_PROMPT_EN.format(src=agent_a['name'], dst=agent_b['name'], hlq=hlq_block, evid=evid_block, src_persona=src_p, dst_persona=dst_p)
+        p_ba = RELN_REFLECT_PROMPT_EN.format(src=agent_b['name'], dst=agent_a['name'], hlq=hlq_block, evid=evid_block, src_persona=dst_p, dst_persona=src_p)
+
+    # --- Trace: write prompt components to a dedicated JSONL file ---
+    try:
+        trace_path = os.path.join(getattr(args, 'out_dir', '.'), f'rr_prompt_trace_session_{session_idx}.jsonl')
+        # common payload pieces
+        base_payload = {
+            'time': datetime.utcnow().isoformat(),
+            'session_idx': session_idx,
+            'language': lang,
+            'hlq_list': hlq,
+            'hlq_block': hlq_block.strip(),
+            'evidence_numbered': numbered,
+            'evidence_block': evid_block.strip(),
+        }
+        # A -> B
+        if target in ('a', 'both'):
+            payload_ab = {
+                **base_payload,
+                'direction': 'a_to_b',
+                'src': agent_a['name'],
+                'dst': agent_b['name'],
+                'src_persona': src_p,
+                'dst_persona': dst_p,
+                'prompt': p_ab,
+            }
+            with open(trace_path, 'a', encoding='utf-8') as tf:
+                tf.write(json.dumps(payload_ab, ensure_ascii=False) + "\n")
+        # B -> A
+        if target in ('b', 'both'):
+            payload_ba = {
+                **base_payload,
+                'direction': 'b_to_a',
+                'src': agent_b['name'],
+                'dst': agent_a['name'],
+                'src_persona': dst_p,
+                'dst_persona': src_p,
+                'prompt': p_ba,
+            }
+            with open(trace_path, 'a', encoding='utf-8') as tf:
+                tf.write(json.dumps(payload_ba, ensure_ascii=False) + "\n")
+    except Exception as _e:
+        logging.debug(f"Failed to append rr prompt trace: {_e}")
+
+    result = {'a_to_b': None, 'b_to_a': None, 'by_speaker': {}}
+    if target in ('a','both'):
+        try:
+            r_ab = run_json_trials(p_ab, model='chatgpt', num_tokens_request=160)
+        except Exception as e:
+            logging.debug(f"relationship_reflection A->B parsing failed: {e}")
+            r_ab = {}
+        if not isinstance(r_ab, dict):
+            logging.debug(f"relationship_reflection A->B not dict, got {type(r_ab)}; defaulting to zeros")
+            r_ab = {}
+        result['a_to_b'] = _ensure_rr_schema(r_ab)
+    result['by_speaker'][agent_a['name']] = {'toward': agent_b['name'], 'vector': result['a_to_b']}
+    if target in ('b','both'):
+        try:
+            r_ba = run_json_trials(p_ba, model='chatgpt', num_tokens_request=160)
+        except Exception as e:
+            logging.debug(f"relationship_reflection B->A parsing failed: {e}")
+            r_ba = {}
+        if not isinstance(r_ba, dict):
+            logging.debug(f"relationship_reflection B->A not dict, got {type(r_ba)}; defaulting to zeros")
+            r_ba = {}
+        result['b_to_a'] = _ensure_rr_schema(r_ba)
+    result['by_speaker'][agent_b['name']] = {'toward': agent_a['name'], 'vector': result['b_to_a']}
+
+    if result['a_to_b'] is None:
+        result['a_to_b'] = _ensure_rr_schema({})
+    if result['b_to_a'] is None:
+        result['b_to_a'] = _ensure_rr_schema({})
+    return result
 
 
 def _coerce_score(x, name):

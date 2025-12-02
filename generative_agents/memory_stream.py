@@ -11,6 +11,18 @@ from generative_agents.memory_utils import get_embedding
 logging.basicConfig(level=logging.INFO)
 
 
+# Helper to safely get embedding (handles numpy arrays)
+def _safe_get_embedding(obj, key='embedding', default=None):
+    """Safely retrieve embedding, returning default if None or empty (works with numpy arrays)."""
+    val = obj.get(key) if isinstance(obj, dict) else None
+    if val is None:
+        return default if default is not None else []
+    # Check if empty (works for list, tuple, numpy array)
+    if hasattr(val, '__len__') and len(val) == 0:
+        return default if default is not None else []
+    return val
+
+
 IMPORTANCE_PROMPT_EN = (
     "Rate the intrinsic importance of the following MEMORY for guiding the agent's future behavior and preferences.\n"
     "Return ONLY a JSON object: {{\"importance\": <1-10>}} (integer). No extra text.\n\n"
@@ -142,8 +154,15 @@ class MemoryStore:
     # ---------- retrieval ----------
     #Relevance（関連性）
     @staticmethod
-    def _cosine(a: List[float], b: List[float]) -> float: 
-        if not a or not b:
+    def _cosine(a: List[float], b: List[float]) -> float:
+        # Safely check for empty embeddings (handles numpy arrays, lists, None)
+        def _is_empty(x):
+            if x is None:
+                return True
+            if hasattr(x, '__len__'):
+                return len(x) == 0
+            return False
+        if _is_empty(a) or _is_empty(b):
             return 0.0
         va = np.array(a, dtype=float)
         vb = np.array(b, dtype=float)
@@ -197,7 +216,8 @@ class MemoryStore:
         now = _parse_date(now_date) if now_date else datetime.utcnow()
         scored: List[tuple] = []
         for e in self.entries:
-            sim = self._cosine(q, e.get('embedding') or [])
+            emb_val = _safe_get_embedding(e, 'embedding', [])
+            sim = self._cosine(q, emb_val)
             imp = (float(e.get('importance', 5)) / 10.0)
             created = _parse_date(e.get('created_at'))
             hours = max(0.0, (now - created).total_seconds() / 3600.0)

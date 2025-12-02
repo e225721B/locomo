@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument('--num-events-per-session', type=int, default=50, help="Total number of events to be assigned to each agent per session; 1-2 works best")  # 互換: セッションごとのイベント割当数（現在は未使用）
 
     parser.add_argument('--persona', action="store_true", help="Set flag to sample a new persona from MSC and generate details (ignored if --persona-a/--persona-b are provided)")  # MSCから新規ペルソナを生成（--persona-a/-b があれば無視）
+    parser.add_argument('--persona-dir', type=str, default=None, help="Directory containing persona files (agent_a.json / agent_b.json etc.). Overrides LOCOMO_PERSONA_DIR if set.")  # ペルソナファイル配置ディレクトリ（指定時は環境変数より優先）
     parser.add_argument('--persona-a', type=str, default=None, help="Path to user-provided persona for Agent A (json/txt). If set, uses this instead of MSC")  # ユーザー指定のペルソナA（json/txt）
     parser.add_argument('--persona-b', type=str, default=None, help="Path to user-provided persona for Agent B (json/txt). If set, uses this instead of MSC")  # ユーザー指定のペルソナB（json/txt）
     parser.add_argument('--session', action="store_true", help="Set flag to generate sessions based on the generated/existing personas")  # ペルソナに基づき会話セッションを生成
@@ -56,6 +57,9 @@ def parse_args():
     parser.add_argument('--relationships', action='store_true', help='Evaluate relationship scores (intimacy, power, social_distance, trust) each session for both directions')  # セッションごとに関係スコアを評価
     parser.add_argument('--intra-relationships', action='store_true', help='Evaluate relationship scores every N turns during a session and pass them into the agent prompt')  # セッション中に一定間隔で関係スコアを評価
     parser.add_argument('--intra-frequency', type=int, default=5, help='Number of turns between intra-session relationship evaluations (default 5)')  # 上記の評価間隔（ターン数）
+    # Relationship reflection (-3..+3) options (independent of normal reflection/relationships)
+    parser.add_argument('--relationship-reflection', action='store_true', help='Enable 7-point (-3..+3) relationship_reflection (Intimacy/Power) using HLQ+evidence')
+    parser.add_argument('--relationship-reflection-every-turn', action='store_true', help='If set with --relationship-reflection, compute a relationship_reflection snapshot each turn for the upcoming speaker')
     # Memory stream options
     parser.add_argument('--memory-stream', action='store_true', help='Enable memory stream: store facts/reflections and retrieve top-K memories each turn')  # 記憶を保存し各ターンで上位K件をリトリーブ
     parser.add_argument('--memory-topk', type=int, default=5, help='Top-K memories to retrieve per turn when memory stream is enabled')  # リトリーブ件数K
@@ -128,7 +132,8 @@ def get_user_persona(args):
 
     # 追加: デフォルトのペルソナ配置ディレクトリからの自動読込
     # 優先順位: 明示指定 > 既定ディレクトリ（LOCOMO_PERSONA_DIR or 固定パス）
-    default_dir = os.environ.get('LOCOMO_PERSONA_DIR', '/Users/tomokai/locomo/locomo/personas')
+    # 優先順位: --persona-dir > LOCOMO_PERSONA_DIR 環境変数 > ハードコード既定
+    default_dir = args.persona_dir or os.environ.get('LOCOMO_PERSONA_DIR', '/Users/tomokai/locomo/locomo/personas')
     if (agent_a is None or agent_b is None) and default_dir and os.path.isdir(default_dir):
         def _try_resolve(side: str):
             # 探索候補（上から順に優先）
@@ -295,7 +300,7 @@ def remove_context(args, curr_dialog, prev_dialog, caption=None):
 #毎ターンごとにエージェントに渡す情報
 def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                     prev_sess_date_time='', curr_sess_date_time='',
-                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None, topic=None):
+                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None, topic=None, relationship_reflection=None):
 
     stop_instruction = "To end the conversation, write [END] at the end of the dialog."
     if instruct_stop:
@@ -379,6 +384,30 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
             query += rel_snip
         except Exception:
             pass
+    # If a relationship_reflection snapshot (-3..+3 Intimacy/Power) is provided, append brief guidance
+    if relationship_reflection:
+        try:
+            rr = relationship_reflection
+            # only pass self (speaker_1) -> other (speaker_2)
+            v12 = None
+            if isinstance(rr, dict) and 'by_speaker' in rr and speaker_1['name'] in rr['by_speaker']:
+                v12 = rr['by_speaker'][speaker_1['name']].get('vector')
+            def _fmt2(v):
+                if not isinstance(v, dict):
+                    return 'Intimacy=?, Power=?'
+                # backward compatibility: allow old keys
+                intimacy = v.get('Intimacy', v.get('Politeness', v.get('attentiveness','?')))
+                power = v.get('Power', v.get('Self-Disclosure', v.get('positivity','?')))
+                return 'Intimacy=%s, Power=%s' % (intimacy, power)
+            rr_snip = '\n\nRelationship reflection (7-point -3..+3):\n'
+            rr_snip += f"{speaker_1['name']} -> {speaker_2['name']}: " + _fmt2(v12) + '\n'
+            if language == 'ja':
+                rr_snip += 'この値を参考に、親密度・力関係を調整してください。数値は -3(低)〜+3(高) です。\n'
+            else:
+                rr_snip += 'Use this to adjust intimacy and power (-3 low .. +3 high).\n'
+            query += rr_snip
+        except Exception:
+            pass
     return query
 
 
@@ -425,6 +454,24 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
     })
     # current in-session relationship snapshot (updated every N turns if enabled)
     current_relationships = None
+    # current in-session relationship_reflection snapshot (-3..+3 pair), default zeros
+    def _zero_rr():
+        return {
+            'a_to_b': {'Intimacy': 0, 'Power': 0},
+            'b_to_a': {'Intimacy': 0, 'Power': 0},
+            'by_speaker': {
+                agent_a['name']: {'toward': agent_b['name'], 'vector': {'Intimacy': 0, 'Power': 0}},
+                agent_b['name']: {'toward': agent_a['name'], 'vector': {'Intimacy': 0, 'Power': 0}}
+            }
+        }
+    # Carry-over: if previous session has relationship_reflection, start from it
+    prev_rr = None
+    try:
+        if curr_sess_id > 1:
+            prev_rr = agent_a.get(f'session_{curr_sess_id-1}_relationship_reflection')
+    except Exception:
+        prev_rr = None
+    current_relationship_reflection = prev_rr if isinstance(prev_rr, dict) else _zero_rr()
     # memory stores (loaded once per session)
     mem_a = MemoryStore(agent_a, lang=args.lang) if args.memory_stream else None
     mem_b = MemoryStore(agent_b, lang=args.lang) if args.memory_stream else None
@@ -464,6 +511,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
     for i in range(args.max_turns_per_session):
         if break_at_next_a and break_at_next_b:
             break
+
+        # (変更) relationship_reflection は相手の発話を受けた後に算出し、次の発話に渡す。初期値は 0。
 
         # 各ターンでのリトリーブ結果（テキストのみ）を収集するための一時領域
         retrieved_texts_for_turn = []
@@ -512,6 +561,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 reflection=reflection,
                 language=args.lang,
                 relationships=current_relationships,
+                relationship_reflection=current_relationship_reflection,
                 memory_snippet=mem_snip,
                 topic=session_topic
             )
@@ -541,6 +591,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 reflection=reflection,
                 language=args.lang,
                 relationships=current_relationships,
+                relationship_reflection=current_relationship_reflection,
                 memory_snippet=mem_snip,
                 topic=session_topic
             )
@@ -572,20 +623,41 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 各ターンのリトリーブ結果（テキスト配列）を保存（エクスポート用）
         output["retrieved"] = retrieved_texts_for_turn or []
         session.append(output)
-        # --- export minimal per-turn trace (utterance + retrieved) ---
+        # --- export minimal per-turn trace (utterance + retrieved + relationship_reflection used-direction) ---
         try:
             trace_path = os.path.join(args.out_dir, f'prompt_trace_session_{curr_sess_id}.jsonl')
+            # derive the vector passed to this speaker (self->other) for logging
+            def _vec_for(name_self, rr):
+                if isinstance(rr, dict) and 'by_speaker' in rr and name_self in rr['by_speaker']:
+                    return rr['by_speaker'][name_self].get('vector')
+                return None
+            used_vec = _vec_for(output.get('speaker'), current_relationship_reflection)
             minimal = {
                 'session_id': curr_sess_id,
                 'turn': i,
                 'speaker': output.get('speaker'),
                 'utterance': output.get('clean_text', ''),
-                'retrieved_texts': output.get('retrieved', [])
+                'retrieved_texts': output.get('retrieved', []),
+                'relationship_reflection': used_vec
             }
             with open(trace_path, 'a', encoding='utf-8') as tf:
                 tf.write(json.dumps(minimal, ensure_ascii=False) + "\n")
         except Exception as _e:
             logging.debug(f"Failed to append minimal prompt trace: {_e}")
+        # concise console log for relationship_reflection (self->other) used this turn
+        try:
+            if args.relationship_reflection and current_relationship_reflection:
+                def _fmt(v):
+                    if not isinstance(v, dict):
+                        return 'Intimacy=?, Power=?'
+                    return (
+                        f"Intimacy={v.get('Intimacy', v.get('Politeness', v.get('attentiveness','?')))}, "
+                        f"Power={v.get('Power', v.get('Self-Disclosure', v.get('positivity','?')))}"
+                    )
+                used = used_vec if 'used_vec' in locals() else None
+                logging.info(f"[rr] turn={i} used self→other: {output.get('speaker')}: {_fmt(used)}")
+        except Exception as _e:
+            logging.debug(f"Failed to log relationship_reflection snapshot: {_e}")
 
         # もし、メモリストリームが有効なら、発話を両エージェントのメモリにミラー保存し、importantce 統計は話した側のみ更新
         if args.memory_stream:
@@ -620,7 +692,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             except Exception as e:
                 logging.warning(f"Failed to add dialog memory for dynamic reflection trigger: {e}")
 
-        # Per-turn reflection（変更後）: ターン終了後に「次に話す側（リスナー）」が内省する
+    # Per-turn reflection（変更後）: ターン終了後に「次に話す側（リスナー）」が内省する
         if args.reflection and args.reflection_every_turn:
             try:
                 # セッション進行状況を保存
@@ -725,7 +797,40 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         conv_so_far += f"\n{agent_b['name']}: " if curr_speaker == 0 else f"\n{agent_a['name']}: "
         curr_speaker = int(not curr_speaker)
 
-        # 強制的に exact-turns で終了
+        # --- After the utterance, compute relationship_reflection for the next speaker ---
+        # NOTE: This must run BEFORE the break to ensure relationship values are updated each turn
+        if args.relationship_reflection and args.relationship_reflection_every_turn:
+            try:
+                # Save the session so far (including this utterance)
+                agent_a[f'session_{curr_sess_id}'] = session
+                agent_b[f'session_{curr_sess_id}'] = session
+                # Next speaker: curr_speaker has been toggled already above
+                next_is_a = (curr_speaker == 0)
+                target = 'a' if next_is_a else 'b'
+                rr_next = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target=target)
+                # Merge into current snapshot, preserving the opposite direction
+                if next_is_a:
+                    current_relationship_reflection['a_to_b'] = rr_next.get('a_to_b', current_relationship_reflection['a_to_b'])
+                    current_relationship_reflection['by_speaker'][agent_a['name']] = rr_next.get('by_speaker', {}).get(agent_a['name'], current_relationship_reflection['by_speaker'][agent_a['name']])
+                else:
+                    current_relationship_reflection['b_to_a'] = rr_next.get('b_to_a', current_relationship_reflection['b_to_a'])
+                    current_relationship_reflection['by_speaker'][agent_b['name']] = rr_next.get('by_speaker', {}).get(agent_b['name'], current_relationship_reflection['by_speaker'][agent_b['name']])
+                turns_key = f'session_{curr_sess_id}_relationship_reflection_turns'
+                entry_post = {'turn': i, 'rr': rr_next, 'phase': 'after_generation', 'next_speaker': agent_a['name'] if next_is_a else agent_b['name'], 'time': datetime.utcnow().isoformat()}
+                agent_a.setdefault(turns_key, []).append(entry_post)
+                agent_b.setdefault(turns_key, []).append(entry_post)
+                save_agents([agent_a, agent_b], args)
+                # backward compatibility for logging values
+                target_vec = rr_next.get('a_to_b' if next_is_a else 'b_to_a', {})
+                intimacy = target_vec.get('Intimacy', target_vec.get('Politeness', target_vec.get('attentiveness','?')))
+                power = target_vec.get('Power', target_vec.get('Self-Disclosure', target_vec.get('positivity','?')))
+                logging.info(
+                    f"[rr/post] turn={i} updated for next speaker {entry_post['next_speaker']}: Intimacy={intimacy}, Power={power}"
+                )
+            except Exception as _e:
+                logging.warning(f"relationship_reflection post-turn failed at turn {i}: {_e}")
+
+        # 強制的に exact-turns で終了 (関係値内省の後に配置)
         if args.exact_turns_per_session is not None and (i+1) >= args.exact_turns_per_session:
             break
 
@@ -948,6 +1053,16 @@ def main():
                 agent_b['session_%s_relationships' % j] = rels
                 logging.info(f"Session {j} relationships: {rels}")
                 save_agents([agent_a, agent_b], args)
+        # Final relationship_reflection snapshot per session (independent)
+        if args.relationship_reflection and (('session_%s_relationship_reflection' % j not in agent_a) or args.overwrite_session):
+                try:
+                    rr_final = get_relationship_reflection(args, agent_a, agent_b, j, target='both')
+                    agent_a['session_%s_relationship_reflection' % j] = rr_final
+                    agent_b['session_%s_relationship_reflection' % j] = rr_final
+                    save_agents([agent_a, agent_b], args)
+                    logging.info(f"Session {j} relationship_reflection: {rr_final}")
+                except Exception as e:
+                    logging.debug(f"Failed to compute final relationship_reflection for session {j}: {e}")
         else:
             # 既存セッションがあり再生成しない場合でも、テーマ指定があれば保存して表示/エクスポートに反映
             if session_topic:
@@ -1001,7 +1116,8 @@ def main():
                     'facts': agent_a.get(f'session_{sid}_facts'),
                     'reflection': agent_a.get(f'session_{sid}_reflection'),
                     'summary': agent_a.get(f'session_{sid}_summary'),
-                    'relationships': agent_a.get(f'session_{sid}_relationships')
+                    'relationships': agent_a.get(f'session_{sid}_relationships'),
+                    'relationship_reflection': agent_a.get(f'session_{sid}_relationship_reflection')
                 })
     export_payload['sessions'] = sorted(export_payload['sessions'], key=lambda x: x['session_id'])
     with open(export_path, 'w') as f:
