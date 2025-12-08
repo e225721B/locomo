@@ -60,6 +60,7 @@ def parse_args():
     # Relationship reflection (-3..+3) options (independent of normal reflection/relationships)
     parser.add_argument('--relationship-reflection', action='store_true', help='Enable 7-point (-3..+3) relationship_reflection (Intimacy/Power) using HLQ+evidence')
     parser.add_argument('--relationship-reflection-every-turn', action='store_true', help='If set with --relationship-reflection, compute a relationship_reflection snapshot each turn for the upcoming speaker')
+    parser.add_argument('--relationship-reflection-no-inject', action='store_true', help='If set with --relationship-reflection, compute relationship values but do NOT inject them into generation prompts (for ablation study)')
     # Memory stream options
     parser.add_argument('--memory-stream', action='store_true', help='Enable memory stream: store facts/reflections and retrieve top-K memories each turn')  # 記憶を保存し各ターンで上位K件をリトリーブ
     parser.add_argument('--memory-topk', type=int, default=5, help='Top-K memories to retrieve per turn when memory stream is enabled')  # リトリーブ件数K
@@ -548,6 +549,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     retrieved_texts_for_turn = [e.get('text') for e in (top or []) if isinstance(e, dict) and e.get('text')]
                 except Exception:
                     retrieved_texts_for_turn = []
+            # relationship_reflection を注入するかどうか: --relationship-reflection-no-inject が指定されていれば None を渡す
+            rr_for_prompt = None if getattr(args, 'relationship_reflection_no_inject', False) else current_relationship_reflection
             agent_query = get_agent_query(
                 agent_a, agent_b,
                 prev_sess_date_time=prev_date_time_string,
@@ -561,7 +564,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 reflection=reflection,
                 language=args.lang,
                 relationships=current_relationships,
-                relationship_reflection=current_relationship_reflection,
+                relationship_reflection=rr_for_prompt,
                 memory_snippet=mem_snip,
                 topic=session_topic
             )
@@ -578,6 +581,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     retrieved_texts_for_turn = [e.get('text') for e in (top or []) if isinstance(e, dict) and e.get('text')]
                 except Exception:
                     retrieved_texts_for_turn = []
+            # relationship_reflection を注入するかどうか: --relationship-reflection-no-inject が指定されていれば None を渡す
+            rr_for_prompt = None if getattr(args, 'relationship_reflection_no_inject', False) else current_relationship_reflection
             agent_query = get_agent_query(
                 agent_b, agent_a,
                 prev_sess_date_time=prev_date_time_string,
@@ -591,7 +596,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 reflection=reflection,
                 language=args.lang,
                 relationships=current_relationships,
-                relationship_reflection=current_relationship_reflection,
+                relationship_reflection=rr_for_prompt,
                 memory_snippet=mem_snip,
                 topic=session_topic
             )
@@ -816,7 +821,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     current_relationship_reflection['b_to_a'] = rr_next.get('b_to_a', current_relationship_reflection['b_to_a'])
                     current_relationship_reflection['by_speaker'][agent_b['name']] = rr_next.get('by_speaker', {}).get(agent_b['name'], current_relationship_reflection['by_speaker'][agent_b['name']])
                 turns_key = f'session_{curr_sess_id}_relationship_reflection_turns'
-                entry_post = {'turn': i, 'rr': rr_next, 'phase': 'after_generation', 'next_speaker': agent_a['name'] if next_is_a else agent_b['name'], 'time': datetime.utcnow().isoformat()}
+                injected = not getattr(args, 'relationship_reflection_no_inject', False)
+                entry_post = {'turn': i, 'rr': rr_next, 'phase': 'after_generation', 'next_speaker': agent_a['name'] if next_is_a else agent_b['name'], 'time': datetime.utcnow().isoformat(), 'injected': injected}
                 agent_a.setdefault(turns_key, []).append(entry_post)
                 agent_b.setdefault(turns_key, []).append(entry_post)
                 save_agents([agent_a, agent_b], args)
@@ -824,8 +830,9 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 target_vec = rr_next.get('a_to_b' if next_is_a else 'b_to_a', {})
                 intimacy = target_vec.get('Intimacy', target_vec.get('Politeness', target_vec.get('attentiveness','?')))
                 power = target_vec.get('Power', target_vec.get('Self-Disclosure', target_vec.get('positivity','?')))
+                inject_label = '' if injected else ' [NOT INJECTED]'
                 logging.info(
-                    f"[rr/post] turn={i} updated for next speaker {entry_post['next_speaker']}: Intimacy={intimacy}, Power={power}"
+                    f"[rr/post] turn={i} updated for next speaker {entry_post['next_speaker']}: Intimacy={intimacy}, Power={power}{inject_label}"
                 )
             except Exception as _e:
                 logging.warning(f"relationship_reflection post-turn failed at turn {i}: {_e}")

@@ -29,6 +29,7 @@ IMPORTANCE_PROMPT_EN = (
     "MEMORY: \n{mem}\n"
 )
 
+#重要度評価プロンプト（日本語版）
 IMPORTANCE_PROMPT_JA = (
     "次のMEMORYが、エージェントの将来の行動や好みにどれだけ重要かを1〜10の整数で評価してください。\n"
     "出力は JSON オブジェクトのみ: {{\"importance\": <1-10>}}。余計な文は書かないでください。\n\n"

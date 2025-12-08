@@ -43,12 +43,21 @@ REFLECTION_PROMPT_JA = (
 
 # 高レベル質問生成用プロンプト（EN/JA）
 HL_QUESTIONS_PROMPT_EN = (
-    "From the following RECENT MEMORIES (including conversations and reflections), propose the three most important high-level questions that could be answered about the people and events mentioned.\n"
+    "From the following RECENT MEMORIES (including conversations and reflections), propose exactly three high-level questions "
+    "to observe the relationship dimensions below:\n"
+    "1. Power: Who has more influence/dominance in the relationship?\n"
+    "2. Intimacy: How close/warm is the relationship?\n"
+    "3. GoalOrientation: How goal-oriented or task-focused is the interaction?\n\n"
+    "Each question should help assess one of these dimensions.\n"
     "Return ONLY a JSON array of exactly three strings. No extra text.\n\nRECENT MEMORIES:\n{mems}\n"
 )
 
 HL_QUESTIONS_PROMPT_JA = (
-    "次の直近のメモリ（会話・気づきを含む）のみを根拠として、その中に登場する人物や出来事について答えられる最も重要な高レベルの質問を3つ挙げてください。\n"
+    "次の直近のメモリ（会話・気づきを含む）のみを根拠として、以下の3つの関係性次元を観察するための高レベル質問を1つずつ作成してください:\n"
+    "1. Power（力関係）: どちらがより優位・影響力を持っているか？\n"
+    "2. Intimacy（親密度）: どれだけ親しく温かい関係か？\n"
+    "3. GoalOrientation（目的指向性）: やり取りがどれだけ目的・タスク志向か？\n\n"
+    "各質問はそれぞれの次元を評価するのに役立つものにしてください。\n"
     "出力は JSON 配列（要素は文字列）『のみ』で、ちょうど3件返してください。余計な文章は書かないでください。\n\n直近メモリ:\n{mems}\n"
 )
 
@@ -105,22 +114,24 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
 # --- Relationship Reflection (7-point: -3..+3) prompts ---
 RELN_REFLECT_PROMPT_EN = (
     "You are rating a 7-point relationship reflection FROM {src} TO {dst} using ONLY the numbered EVIDENCE below (and the high-level questions used as retrieval intent).\n"
-    "Rate exactly two dimensions as integers in the closed range -3..+3 (7-point scale):\n"
+    "Rate exactly three dimensions as integers in the closed range -3..+3 (7-point scale):\n"
+    "- Power: perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful/dominant.\n"
     "- Intimacy: degree of closeness/affection {src} feels toward {dst}. Higher means closer.\n"
-    "- Power: perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful/dominant.\n\n"
+    "- GoalOrientation: how goal-oriented or task-focused the interaction is. Higher means more task-focused, lower means more social/casual.\n\n"
     "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
-    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Intimacy\":2,\"Power\":-1}}. No extra text.\n\n"
+    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Power\":-1,\"Intimacy\":2,\"GoalOrientation\":1}}. No extra text.\n\n"
     "HIGH-LEVEL QUESTIONS:\n{hlq}\n\nEVIDENCE (numbered):\n{evid}\n"
 )
 
 #関係値を生成させるプロンプト
 RELN_REFLECT_PROMPT_JA = (
     "以下の高レベル質問と番号付き根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n"
-    "評価する指標は2つです:\n"
+    "評価する指標は3つです:\n"
+    "- Power: 力関係（{src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる）\n"
     "- Intimacy: 親密度（{src} が {dst} に対して感じる近しさ・好意の度合い。高いほど親しい）\n"
-    "- Power: 力関係（{src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる）\n\n"
+    "- GoalOrientation: 目的指向性（やり取りがどれだけ目的・タスク志向か。高いほどタスク志向、低いほど雑談・社交的）\n\n"
     "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
-    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Intimacy\":-3..+3,\"Power\":-3..+3}}。JSON 以外の文章は書かないでください。\n\n"
+    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"GoalOrientation\":-3..+3}}。JSON 以外の文章は書かないでください。\n\n"
     "高レベル質問:\n{hlq}\n\n根拠（番号付き）:\n{evid}\n"
 )
 

@@ -271,8 +271,8 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
     Returns:
         str | List[str]: num_gen=1 なら文字列、>1 なら文字列リスト
     """
-    # モデル名マッピング
-    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.0-flash")
+    # モデル名
+    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
     
     def _normalize_gemini_model_name(name: str) -> str:
         # SDK により "models/" プレフィックスの有無が異なるため吸収
