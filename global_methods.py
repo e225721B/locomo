@@ -5,6 +5,7 @@ import sys
 import os
 
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from anthropic import Anthropic
 
 # NOTE:
@@ -229,7 +230,27 @@ def run_gemini(model, content: str, max_tokens: int = 0, temperature: float = 1.
             gen_config["max_output_tokens"] = max_tokens
         if candidate_count > 1:
             gen_config["candidate_count"] = candidate_count
-        response = model.generate_content(content, generation_config=gen_config)
+        
+        # Gemini 2.5+ の thinking 機能を無効化（トークン効率のため）
+        # SDK バージョンによってはサポートされていないため、try-except でフォールバック
+        try:
+            from google.generativeai.types import GenerationConfig
+            # thinking_config がサポートされているか確認
+            test_config = GenerationConfig(thinking_config={"thinking_budget": 0})
+            gen_config["thinking_config"] = {"thinking_budget": 0}
+        except (TypeError, ImportError):
+            # thinking_config 未サポートの場合は無視
+            pass
+        
+        # Safety設定を緩和（ロールプレイ・フィクション用途）
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+        
+        response = model.generate_content(content, generation_config=gen_config, safety_settings=safety_settings)
         # 複数候補
         if hasattr(response, 'candidates') and response.candidates and candidate_count > 1:
             texts = []
@@ -271,7 +292,7 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
     Returns:
         str | List[str]: num_gen=1 なら文字列、>1 なら文字列リスト
     """
-    # モデル名
+    # モデル名 (gemini-2.5-flash: thinking無効化により安定動作)
     gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
     
     def _normalize_gemini_model_name(name: str) -> str:
@@ -293,11 +314,9 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
     fallbacks = [
         _normalize_gemini_model_name(_LAST_GOOD_GEMINI_MODEL) if _LAST_GOOD_GEMINI_MODEL else None,
         primary,
-        _normalize_gemini_model_name("gemini-1.5-flash"),
-        _normalize_gemini_model_name("gemini-1.5-flash-latest"),
-        _normalize_gemini_model_name("gemini-1.5-pro-latest"),
-        _normalize_gemini_model_name("gemini-1.0-pro"),
-        _normalize_gemini_model_name("gemini-pro"),
+        _normalize_gemini_model_name("gemini-2.0-flash"),
+        _normalize_gemini_model_name("gemini-2.0-flash-lite"),
+        _normalize_gemini_model_name("gemini-1.5-pro"),
     ]
     # None を除去しつつ順序を保持したユニーク化
     seen = set()

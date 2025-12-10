@@ -43,12 +43,12 @@ REFLECTION_PROMPT_JA = (
 
 # 高レベル質問生成用プロンプト（EN/JA）
 HL_QUESTIONS_PROMPT_EN = (
-    "From the following RECENT MEMORIES (including conversations and reflections), propose exactly three high-level questions "
+    "From the following RECENT MEMORIES (including conversations and reflections), propose exactly three SHORT high-level questions "
     "to observe the relationship dimensions below:\n"
     "1. Power: Who has more influence/dominance in the relationship?\n"
     "2. Intimacy: How close/warm is the relationship?\n"
-    "3. GoalOrientation: How goal-oriented or task-focused is the interaction?\n\n"
-    "Each question should help assess one of these dimensions.\n"
+    "3. TaskOriented: How task-oriented is the dialogue? (vs social/casual chat)\n\n"
+    "Each question should be CONCISE (max 20 words) and help assess one of these dimensions.\n"
     "Return ONLY a JSON array of exactly three strings. No extra text.\n\nRECENT MEMORIES:\n{mems}\n"
 )
 
@@ -56,8 +56,8 @@ HL_QUESTIONS_PROMPT_JA = (
     "次の直近のメモリ（会話・気づきを含む）のみを根拠として、以下の3つの関係性次元を観察するための高レベル質問を1つずつ作成してください:\n"
     "1. Power（力関係）: どちらがより優位・影響力を持っているか？\n"
     "2. Intimacy（親密度）: どれだけ親しく温かい関係か？\n"
-    "3. GoalOrientation（目的指向性）: やり取りがどれだけ目的・タスク志向か？\n\n"
-    "各質問はそれぞれの次元を評価するのに役立つものにしてください。\n"
+    "3. TaskOriented（タスク指向対話）: やり取りがどれだけタスク指向か？（雑談・社交的 vs 目的達成志向）\n\n"
+    "各質問は【簡潔に（30文字程度）】、それぞれの次元を評価するのに役立つものにしてください。\n"
     "出力は JSON 配列（要素は文字列）『のみ』で、ちょうど3件返してください。余計な文章は書かないでください。\n\n直近メモリ:\n{mems}\n"
 )
 
@@ -117,9 +117,9 @@ RELN_REFLECT_PROMPT_EN = (
     "Rate exactly three dimensions as integers in the closed range -3..+3 (7-point scale):\n"
     "- Power: perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful/dominant.\n"
     "- Intimacy: degree of closeness/affection {src} feels toward {dst}. Higher means closer.\n"
-    "- GoalOrientation: how goal-oriented or task-focused the interaction is. Higher means more task-focused, lower means more social/casual.\n\n"
+    "- TaskOriented: how task-oriented the dialogue is. Higher means more task-focused, lower means more social/casual chat.\n\n"
     "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
-    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Power\":-1,\"Intimacy\":2,\"GoalOrientation\":1}}. No extra text.\n\n"
+    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Power\":-1,\"Intimacy\":2,\"TaskOriented\":1}}. No extra text.\n\n"
     "HIGH-LEVEL QUESTIONS:\n{hlq}\n\nEVIDENCE (numbered):\n{evid}\n"
 )
 
@@ -129,9 +129,9 @@ RELN_REFLECT_PROMPT_JA = (
     "評価する指標は3つです:\n"
     "- Power: 力関係（{src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる）\n"
     "- Intimacy: 親密度（{src} が {dst} に対して感じる近しさ・好意の度合い。高いほど親しい）\n"
-    "- GoalOrientation: 目的指向性（やり取りがどれだけ目的・タスク志向か。高いほどタスク志向、低いほど雑談・社交的）\n\n"
+    "- TaskOriented: タスク指向対話（やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的）\n\n"
     "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
-    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"GoalOrientation\":-3..+3}}。JSON 以外の文章は書かないでください。\n\n"
+    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"TaskOriented\":-3..+3}}。JSON 以外の文章は書かないでください。\n\n"
     "高レベル質問:\n{hlq}\n\n根拠（番号付き）:\n{evid}\n"
 )
 
@@ -178,8 +178,8 @@ def get_session_facts(args, agent_a, agent_b, session_idx, return_embeddings=Tru
     # print(conversation)
     
     input = task['input_prefix'] + conversation
-    # 以前は 500 トークンだったが JSON が途中で途切れる事例が多発したため余裕を持って拡張
-    facts = run_json_trials(query, num_gen=1, num_tokens_request=900, use_16k=False, examples=examples, input=input)
+    # Gemini 2.5 thinking対応で2000トークンに増加
+    facts = run_json_trials(query, num_gen=1, num_tokens_request=2000, use_16k=False, examples=examples, input=input)
 
     # --- 安全対策: facts の話者キーを Agent 名に正規化して整合させる ---
     def _norm_name(s: str) -> str:
@@ -339,7 +339,7 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
     def _gen_questions(recent_texts: List[str]) -> List[str]:
         joined = '\n- '.join([t for t in recent_texts if t])
         prompt = (HL_QUESTIONS_PROMPT_JA if lang == 'ja' else HL_QUESTIONS_PROMPT_EN).format(mems='- ' + joined)
-        qs = run_json_trials(prompt, model='chatgpt', num_tokens_request=280)
+        qs = run_json_trials(prompt, model='chatgpt', num_tokens_request=3000)
         if isinstance(qs, dict):
             qs = list(qs.values())
         if not isinstance(qs, list):
@@ -550,12 +550,12 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
             prompt_ab = REFLECTION_PROMPT_JA.format(
                 agent_a['name'], agent_b['name'], prev_ab, evidence_block + cite_note, agent_a['name'], agent_b['name']
             )
-            agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
+            agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=2000)
         if target in ('b', 'both'):
             prompt_ba = REFLECTION_PROMPT_JA.format(
                 agent_b['name'], agent_a['name'], prev_ba, evidence_block + cite_note, agent_b['name'], agent_a['name']
             )
-            agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
+            agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=2000)
     else:
         # EN: keep behavior consistent (use INIT if no previous, otherwise CONTINUE)
         if target in ('a', 'both'):
@@ -567,7 +567,7 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
                 prompt_ab = REFLECTION_INIT_PROMPT_EN.format(
                     evidence_block + cite_note, agent_a['name'], agent_b['name']
                 )
-            agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=300)
+            agent_a_on_b = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=2000)
         if target in ('b', 'both'):
             if prev_ba.strip():
                 prompt_ba = REFLECTION_CONTINUE_PROMPT_EN.format(
@@ -577,7 +577,7 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
                 prompt_ba = REFLECTION_INIT_PROMPT_EN.format(
                     evidence_block + cite_note, agent_b['name'], agent_a['name']
                 )
-            agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=300)
+            agent_b_on_a = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=2000)
 
     # --- Self reflections ---
     prev_a_self = ''
@@ -631,9 +631,9 @@ def get_session_reflection(args, agent_a, agent_b, session_idx, target: str = 'b
     agent_a_self = []
     agent_b_self = []
     if target in ('a', 'both'):
-        agent_a_self = run_json_trials(prompt_a_self, model='chatgpt', num_tokens_request=300)
+        agent_a_self = run_json_trials(prompt_a_self, model='chatgpt', num_tokens_request=2000)
     if target in ('b', 'both'):
-        agent_b_self = run_json_trials(prompt_b_self, model='chatgpt', num_tokens_request=300)
+        agent_b_self = run_json_trials(prompt_b_self, model='chatgpt', num_tokens_request=2000)
 
     if type(agent_a_self) == dict:
         agent_a_self = list(agent_a_self.values())
@@ -663,7 +663,7 @@ def _rr_coerce(v):
     return max(-3, min(3, x))
 
 def _ensure_rr_schema(obj: dict) -> dict:
-    """Ensure new Intimacy/Power keys.
+    """Ensure new Intimacy/Power/TaskOriented keys.
     Backward compatibility: map old keys if new ones absent."""
     if not isinstance(obj, dict):
         obj = {}
@@ -678,16 +678,24 @@ def _ensure_rr_schema(obj: dict) -> dict:
             obj['Power'] = obj.get('positivity')
         elif 'Self-Disclosure' in obj:
             obj['Power'] = obj.get('Self-Disclosure')
+    if 'TaskOriented' not in obj:
+        if 'GoalOrientation' in obj:
+            obj['TaskOriented'] = obj.get('GoalOrientation')
+        elif 'engagement' in obj:
+            obj['TaskOriented'] = obj.get('engagement')
+        elif 'TaskFocus' in obj:
+            obj['TaskOriented'] = obj.get('TaskFocus')
     return {
-        'Intimacy': _rr_coerce(obj.get('Intimacy', 0)),
         'Power': _rr_coerce(obj.get('Power', 0)),
+        'Intimacy': _rr_coerce(obj.get('Intimacy', 0)),
+        'TaskOriented': _rr_coerce(obj.get('TaskOriented', 0)),
     }
 
 def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str = 'both'):
     """Compute 7-point (-3..+3) relationship reflection vector using HLQ + evidence pipeline.
     Returns dict:
       {
-        'a_to_b': {Intimacy, Power},
+        'a_to_b': {Power, Intimacy, TaskOriented},
         'b_to_a': {...},
         'by_speaker': { A_name: {toward: B_name, vector:{...}}, B_name: {...} }
       }
@@ -777,10 +785,10 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
 
     recent = _collect(limit=10)
     recent_texts = [e.get('text','') for e in recent]
-    # HLQ generation
+    # HLQ generation (Gemini 2.5 thinking対応で3000トークンに増加)
     joined = '\n- '.join([t for t in recent_texts if t])
     hl_prompt = (HL_QUESTIONS_PROMPT_JA if lang=='ja' else HL_QUESTIONS_PROMPT_EN).format(mems='- ' + joined)
-    qs = run_json_trials(hl_prompt, model='chatgpt', num_tokens_request=250)
+    qs = run_json_trials(hl_prompt, model='chatgpt', num_tokens_request=3000)
     if isinstance(qs, dict):
         qs = list(qs.values())
     if not isinstance(qs, list):
@@ -896,7 +904,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     result = {'a_to_b': None, 'b_to_a': None, 'by_speaker': {}}
     if target in ('a','both'):
         try:
-            r_ab = run_json_trials(p_ab, model='chatgpt', num_tokens_request=160)
+            r_ab = run_json_trials(p_ab, model='chatgpt', num_tokens_request=2000)
         except Exception as e:
             logging.debug(f"relationship_reflection A->B parsing failed: {e}")
             r_ab = {}
@@ -907,7 +915,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     result['by_speaker'][agent_a['name']] = {'toward': agent_b['name'], 'vector': result['a_to_b']}
     if target in ('b','both'):
         try:
-            r_ba = run_json_trials(p_ba, model='chatgpt', num_tokens_request=160)
+            r_ba = run_json_trials(p_ba, model='chatgpt', num_tokens_request=2000)
         except Exception as e:
             logging.debug(f"relationship_reflection B->A parsing failed: {e}")
             r_ba = {}
@@ -975,9 +983,9 @@ def get_session_relationships(args, agent_a, agent_b, session_idx, session_dialo
         prompt_ab = RELATIONSHIP_ASSESS_PROMPT_EN.format(src=agent_a['name'], dst=agent_b['name'], conv=conversation)
         prompt_ba = RELATIONSHIP_ASSESS_PROMPT_EN.format(src=agent_b['name'], dst=agent_a['name'], conv=conversation)
 
-    # Force strict JSON
-    rel_ab = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=180)
-    rel_ba = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=180)
+    # Force strict JSON (Gemini 2.5 thinking対応で2000トークンに増加)
+    rel_ab = run_json_trials(prompt_ab, model='chatgpt', num_tokens_request=2000)
+    rel_ba = run_json_trials(prompt_ba, model='chatgpt', num_tokens_request=2000)
 
     if not isinstance(rel_ab, dict):
         logging.warning(f"Relationship A->B not a dict: {type(rel_ab)}. Using defaults.")

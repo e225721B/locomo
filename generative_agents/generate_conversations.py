@@ -236,7 +236,7 @@ def get_session_summary(session, speaker_1, speaker_2, curr_date, previous_summa
     # 言語指定は run 時の args に存在するので後段 main から渡せないため、簡易判定: 日本語指示文を末尾に追加できるようフラグ環境利用も可
     if os.environ.get('LOCOMO_LANG') == 'ja':
         query += '\n出力は日本語で 150 語以内で要約してください。'
-    output = run_chatgpt(query, 1, 150, 'chatgpt')
+    output = run_chatgpt(query, 1, 1000, 'chatgpt')
     output = output.strip()
     return output
 
@@ -246,7 +246,7 @@ def get_image_queries(events):
     images = [e["image"] for e in events]
     input_query = "\nInput: ".join(images)
 
-    output = run_chatgpt(EVENT2QUERY_PROMPT % input_query, 1, 200, 'chatgpt')
+    output = run_chatgpt(EVENT2QUERY_PROMPT % input_query, 1, 1000, 'chatgpt')
     output = output.strip()
     print(output)
     json_output = clean_json_output(output)
@@ -605,8 +605,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 画像関連機能無効化 (placeholder)
         # if args.image_search ...
 
-        # トークン上限を拡大し、複数行が返っても1発話として取り込み（改行→スペース）
-        raw = run_chatgpt(agent_query + conv_so_far, 1, 200, 'chatgpt', temperature=1.2)
+        # トークン上限を拡大（Gemini 2.5 thinking対応で1000トークンに増加）
+        raw = run_chatgpt(agent_query + conv_so_far, 1, 1000, 'chatgpt', temperature=1.2)
         raw = ' '.join(raw.strip().splitlines())
         cleaned = clean_dialog(raw, agent_a['name'] if curr_speaker == 0 else agent_b['name'])
         output = {"text": cleaned, "raw_text": cleaned}
@@ -620,7 +620,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 if args.lang == 'ja':
                     output["clean_text"] = text_replaced_caption
                 else:
-                    output["clean_text"] = run_chatgpt(CASUAL_DIALOG_PROMPT % text_replaced_caption, 1, 100, 'chatgpt').strip()
+                    output["clean_text"] = run_chatgpt(CASUAL_DIALOG_PROMPT % text_replaced_caption, 1, 1000, 'chatgpt').strip()
         else:
             output["clean_text"] = ""
 
@@ -654,10 +654,11 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             if args.relationship_reflection and current_relationship_reflection:
                 def _fmt(v):
                     if not isinstance(v, dict):
-                        return 'Intimacy=?, Power=?'
+                        return 'Power=?, Intimacy=?, TaskOriented=?'
                     return (
+                        f"Power={v.get('Power', v.get('Self-Disclosure', v.get('positivity','?')))}, "
                         f"Intimacy={v.get('Intimacy', v.get('Politeness', v.get('attentiveness','?')))}, "
-                        f"Power={v.get('Power', v.get('Self-Disclosure', v.get('positivity','?')))}"
+                        f"TaskOriented={v.get('TaskOriented', v.get('GoalOrientation', '?'))}"
                     )
                 used = used_vec if 'used_vec' in locals() else None
                 logging.info(f"[rr] turn={i} used self→other: {output.get('speaker')}: {_fmt(used)}")
@@ -830,9 +831,10 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 target_vec = rr_next.get('a_to_b' if next_is_a else 'b_to_a', {})
                 intimacy = target_vec.get('Intimacy', target_vec.get('Politeness', target_vec.get('attentiveness','?')))
                 power = target_vec.get('Power', target_vec.get('Self-Disclosure', target_vec.get('positivity','?')))
+                task_oriented = target_vec.get('TaskOriented', target_vec.get('GoalOrientation', '?'))
                 inject_label = '' if injected else ' [NOT INJECTED]'
                 logging.info(
-                    f"[rr/post] turn={i} updated for next speaker {entry_post['next_speaker']}: Intimacy={intimacy}, Power={power}{inject_label}"
+                    f"[rr/post] turn={i} updated for next speaker {entry_post['next_speaker']}: Power={power}, Intimacy={intimacy}, TaskOriented={task_oriented}{inject_label}"
                 )
             except Exception as _e:
                 logging.warning(f"relationship_reflection post-turn failed at turn {i}: {_e}")
