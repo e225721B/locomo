@@ -17,36 +17,39 @@ PERSONA_FROM_MSC_PROMPT = (
 EVENT2QUERY_PROMPT = "Let's write short image search queries in order to find a suitable image for illustrating the given events. Queries should not include names of people, years and other irrelevant details. For example:\n\nInput: A picture of the modern art museum he visited with his grandchildren in Paris in 2018.\nOutput: modern art museum in Paris\n\nInput: A picture of the shared room she and her siblings lived in when she was growing up.\nOutput: cramped room with multiple beds\n\nInput: A photo of the new art supplies Jeremy bought for his upcoming art project with his mentor.\nOutput: new art supplies on a table\n\nInput: A picture of the delicious homemade vegetable smoothie she prepared using fresh produce from her well-organized garden, which she loves to maintain every morning.\n Output: produce garden at home\n\nWrite search queries for the following inputs.\n\n%s\n\nWrite answers in the form of a json list, where each entry is a query."
 
 #最初の発話の際にエージェントに投げるプロンプト
-AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と初めて会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う一言を書いてください。会話を始める場合は、相手の近況を尋ねるか、最近あなたに起きた出来事について話してください。これまでの会話で共有した情報は繰り返さないでください。会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。'last Friday' や 'next month'、'when I was ten years old' のような時間参照や、具体的な場所名を含めてください。返答は 20 語相当以内の短い一文で書いてください。例えば、\n\n%s: 子どもの頃、母がよくパイナップルの誕生日ケーキを焼いてくれて大好きでした。\n\n会話を終えるときは『Bye!』と書いてください。\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と初めて会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な一言を書いてください。\n\n指示:\n- 相手の発言に自然に応答するか、会話を始める場合は挨拶や近況を尋ねてください\n- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください\n- 返答は短く自然な一文（20語相当以内）で書いてください\n- 同じ話題や情報を繰り返さないでください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
 
 AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """
-与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
-- 会話を始める場合は、相手のことを尋ねるか、最近あなたに起きた出来事について話してください。
-- これまでの会話で共有した情報は繰り返さないでください。
-- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
-- 返答は 20 語相当以内の短い一文で書いてください。
-- 以前の会話内容へのフォローアップの質問を入れてもかまいません。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+
+指示:
+- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
+- 相手の発言の内容や文脈に沿って自然に応答してください
+- 返答は短く自然な一文（20語相当以内）で書いてください
+- 同じ話題や情報を繰り返さないでください
+- 必要に応じて EVENTS の内容を会話に活かしてください
 
 PERSONALITY: %s
 
 %s は %s と初めて会話します。今日は %s です。%s の人生で以下の出来事が起きました。
 EVENTS: %s
 
-あなたは %s になりきり、%s と親しみのある会話の中でこれらの EVENTS について話してください。%s
+あなたは %s になりきり、%s との会話で次に言う自然な一言を書いてください。%s
 """
 
 
-AGENT_CONV_PROMPT = "%s\n\n%s は %s と %s に最後に話しました。%s\n\n今日は %s です。あなたは %s になりきり、%s に対して次に言う一言を書いてください。会話を始める場合は、相手の近況を尋ねる、以前の会話のフォローアップをする、または相手が興味を持ちそうな最近の出来事を話してください。これまでに共有した情報は繰り返さないでください。会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。'last Friday' や 'next month'、'when I was ten years old' のような時間参照や、具体的な場所名を含めてください。返答は 20 語相当以内の短い一文で書いてください。例えば、\n\n%s: 子どもの頃、母がよくパイナップルの誕生日ケーキを焼いてくれて大好きでした。\n\n会話を終えるときは『Bye!』と書いてください。\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT = "%s\n\n%s は %s と %s に最後に話しました。%s\n\n今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な一言を書いてください。\n\n指示:\n- 相手の発言に自然に応答してください\n- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください\n- 返答は短く自然な一文（20語相当以内）で書いてください\n- 同じ話題や情報を繰り返さないでください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
 
 
 AGENT_CONV_PROMPT_W_EVENTS = """
-与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
-- 会話を始める場合は、相手のことを尋ねるか、最近あなたに起きた出来事について話してください。
-- これまでの会話で共有した情報は繰り返さないでください。
-- 会話は個人的で、家族・友人・好き嫌い・将来の希望などに触れてください。
-- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
-- 返答は 20 語相当以内の短い一文で書いてください。
-- 以前の会話内容へのフォローアップの質問を入れてもかまいません。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+
+指示:
+- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
+- 相手の発言の内容や文脈に沿って自然に応答してください
+- 返答は短く自然な一文（20語相当以内）で書いてください
+- 同じ話題や情報を繰り返さないでください
+- 必要に応じて EVENTS の内容を会話に活かしてください
 
 PERSONALITY: %s
 
@@ -57,64 +60,63 @@ PERSONALITY: %s
 今日は %s です。あなたは %s です。前回この相手に会ってから、あなたの人生で以下の出来事が起きました:
 %s
 
-これらの EVENTS を会話に活用してください。%s あなたの PERSONALITY に沿って、%s とのこの会話で次に言う一言を書いてください:
+%s あなたの PERSONALITY に沿って、%s との会話で次に言う自然な一言を書いてください:
 """
 
 
 AGENT_CONV_PROMPT_W_EVENTS_V2_INIT = """
-与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
-- 返答は 20 語相当以内の短い一文で書いてください。
-- 感情・好き嫌い・願望・人間関係などを扱い、会話は深く個人的な内容にしてください。重要な出来事は具体的に述べてください。
-- これまでの会話で共有した情報は繰り返さないでください。
-- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
-- ときどき、前回の会話や現在の話題に対するフォローアップ質問をしてください。
-- 屋外活動については話さないでください。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+
+指示:
+- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
+- 相手の発言の内容や文脈に沿って自然に応答してください
+- 返答は短く自然な一文（20語相当以内）で書いてください
+- 同じ話題や情報を繰り返さないでください
+- 必要に応じて EVENTS や SUMMARY の内容を会話に活かしてください
 
 PERSONALITY: %s
 
+%s は %s と %s に最後に話しました。今日は %s です。あなたは %s です。
 
-%s は %s と %s に最後に話しました。今日は %s です。あなたは %s です。 
-
-これまでの会話の要約は次のとおりです。
+これまでの会話の要約:
 SUMMARY:
 %s
 
-前回この相手に会ってから、あなたの人生で以下の出来事が起きました。
+前回この相手に会ってから起きた出来事:
 EVENTS:
 %s
 
-
-
-%s あなたと %s のこの会話で、思慮深い次の一言を書いてください。与えられた EVENTS のみを取り上げ、それがあなたの人生に与える影響を語ってください。EVENTS が否定的なら、動揺や辛さも表現してください。:
+%s あなたと %s の会話で、次に言う自然な一言を書いてください:
 """
 
 
 AGENT_CONV_PROMPT_W_EVENTS_V2 = """
-与えられた PERSONALITY を用いて、会話の次にあなたが言う一言を書いてください。
-- 返答は 20 語相当以内の短い一文で書いてください。
-- 感情・好き嫌い・願望・人間関係などを扱い、会話は深く個人的な内容にしてください。重要な出来事は具体的に述べてください。
-- これまでの会話で共有した情報は繰り返さないでください。
-- 'last Friday' や 'next month'、'when I was ten years old' のような時間参照、特定の人物への言及を含めてください。
-- ときどき、前回の会話や現在の話題に対するフォローアップ質問をしてください。
-- 屋外活動については話さないでください。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+
+指示:
+- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
+- 相手の発言の内容や文脈に沿って自然に応答してください
+- 返答は短く自然な一文（20語相当以内）で書いてください
+- 同じ話題や情報を繰り返さないでください
+- 必要に応じて EVENTS, SUMMARY, RELEVANT_CONTEXT の内容を会話に活かしてください
 
 PERSONALITY: %s
 
-%s は %s と %s に最後に話しました。今日は %s です。あなたは %s です。 
+%s は %s と %s に最後に話しました。今日は %s です。あなたは %s です。
 
-これまでの会話の要約は次のとおりです。
+これまでの会話の要約:
 SUMMARY:
 %s
 
-前回この相手に会ってから、あなたの人生で以下の出来事が起きました。
+前回この相手に会ってから起きた出来事:
 EVENTS:
 %s
 
-双方が知っている関連情報は次のとおりです。
+双方が知っている関連情報:
 RELEVANT_CONTEXT:
 %s
 
-%s あなたと %s のこの親密な会話で、思慮深い次の一言を書いてください。与えられた EVENTS のみを取り上げ、それがあなたの人生に与える影響を語ってください。EVENTS が否定的なら、動揺や辛さも表現してください。:
+%s あなたと %s の会話で、次に言う自然な一言を書いてください:
 """
 
 

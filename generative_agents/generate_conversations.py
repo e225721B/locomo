@@ -385,7 +385,7 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
             query += rel_snip
         except Exception:
             pass
-    # If a relationship_reflection snapshot (-3..+3 Intimacy/Power) is provided, append brief guidance
+    # 関係値（7点尺度 -3..+3）を提供する場合
     if relationship_reflection:
         try:
             rr = relationship_reflection
@@ -395,17 +395,18 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                 v12 = rr['by_speaker'][speaker_1['name']].get('vector')
             def _fmt2(v):
                 if not isinstance(v, dict):
-                    return 'Intimacy=?, Power=?'
+                    return 'Intimacy=?, Power=?, TaskOriented=?'
                 # backward compatibility: allow old keys
                 intimacy = v.get('Intimacy', v.get('Politeness', v.get('attentiveness','?')))
                 power = v.get('Power', v.get('Self-Disclosure', v.get('positivity','?')))
-                return 'Intimacy=%s, Power=%s' % (intimacy, power)
+                task_oriented = v.get('TaskOriented', v.get('GoalOrientation', '?'))
+                return 'Intimacy=%s, Power=%s, TaskOriented=%s' % (intimacy, power, task_oriented)
             rr_snip = '\n\nRelationship reflection (7-point -3..+3):\n'
             rr_snip += f"{speaker_1['name']} -> {speaker_2['name']}: " + _fmt2(v12) + '\n'
             if language == 'ja':
-                rr_snip += 'この値を参考に、親密度・力関係を調整してください。数値は -3(低)〜+3(高) です。\n'
+                rr_snip += 'この値を参考に、親密度・力関係、目的指向性を調整してください。数値は -3(低)〜+3(高) です。\n'
             else:
-                rr_snip += 'Use this to adjust intimacy and power (-3 low .. +3 high).\n'
+                rr_snip += 'Use this to adjust intimacy, power, and task orientation (-3 low .. +3 high).\n'
             query += rr_snip
         except Exception:
             pass

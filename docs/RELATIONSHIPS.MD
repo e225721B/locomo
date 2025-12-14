@@ -1,66 +1,133 @@
-# 関係値（Relationship Scoring）
+# 関係値システム（Relationship Reflection）
 
-会話セッションごとに、話者 A→B／B→A の関係性を以下の 4 指標（1〜10）で評価し、保存・出力します。
+会話セッションにおける話者間の関係性を内省するシステムです。HLQ + 根拠パイプラインによる 3 指標での関係内省を提供します。
 
-- intimacy（親密度）
-- power（力関係; 値が高いほど自分が優位と感じる）
-- social_distance（社会的距離; 高いほど距離がある）
-- trust（信頼）
+---
 
-## 実装概要
+## Relationship Reflection（7 点スケール: -3〜+3）
 
-- 定義とロジック: `generative_agents/memory_utils.py`
+メモリストリームから取得した根拠に基づき、3 指標で関係を内省します。
 
-  - プロンプト: `RELATIONSHIP_ASSESS_PROMPT_EN` / `RELATIONSHIP_ASSESS_PROMPT_JA`
-  - 実行関数: `get_session_relationships(args, agent_a, agent_b, session_idx)`
-  - 戻り値スキーマ:
-    ```json
-    {
-      "a_to_b": { "intimacy": 7, "power": 4, "social_distance": 3, "trust": 6 },
-      "b_to_a": { "intimacy": 6, "power": 5, "social_distance": 4, "trust": 7 },
-      "by_speaker": {
-        "<AgentAName>": {
-          "toward": "<AgentBName>",
-          "scores": {
-            "intimacy": 7,
-            "power": 4,
-            "social_distance": 3,
-            "trust": 6
-          }
-        },
-        "<AgentBName>": {
-          "toward": "<AgentAName>",
-          "scores": {
-            "intimacy": 6,
-            "power": 5,
-            "social_distance": 4,
-            "trust": 7
-          }
-        }
+| 指標           | 説明                                             |
+| -------------- | ------------------------------------------------ |
+| `Power`        | 力関係（+3 で優位、-3 で劣位）                   |
+| `Intimacy`     | 親密度（+3 で親密、-3 で疎遠）                   |
+| `TaskOriented` | タスク指向（+3 でタスク集中、-3 で雑談・社交的） |
+
+### 実装
+
+- **プロンプト**: `RELN_REFLECT_PROMPT_EN` / `RELN_REFLECT_PROMPT_JA`（`memory_utils.py`）
+- **関数**: `get_relationship_reflection(args, agent_a, agent_b, session_idx, target='both')`
+- **パイプライン**:
+  1. メモリストリームから最新 10 件を収集
+  2. High-Level Questions（HLQ）を生成
+  3. 類似度・重要度・再近性でスコアリングし Top-K を根拠として選択
+  4. HLQ と根拠からプロンプト生成 → LLM で 7 点スケールの値を取得
+- **戻り値スキーマ**:
+  ```json
+  {
+    "a_to_b": { "Power": 1, "Intimacy": 2, "TaskOriented": -1 },
+    "b_to_a": { "Power": -1, "Intimacy": 2, "TaskOriented": 0 },
+    "by_speaker": {
+      "<AgentAName>": {
+        "toward": "<AgentBName>",
+        "vector": { "Power": 1, "Intimacy": 2, "TaskOriented": -1 }
+      },
+      "<AgentBName>": {
+        "toward": "<AgentAName>",
+        "vector": { "Power": -1, "Intimacy": 2, "TaskOriented": 0 }
       }
     }
-    ```
-  - 数値は厳密に整数へ丸め、[1,10] にクリップ。想定外の出力はデフォルト 5 にフォールバック。
+  }
+  ```
+- 数値は整数に丸め、[-3, +3] にクリップ
 
-- パイプライン統合: `generative_agents/generate_conversations.py`
+### CLI フラグ
 
-  - CLI フラグ `--relationships` を追加。
-  - 各セッションの後処理で `get_session_relationships` を呼び、結果を `session_{n}_relationships` として `agent_a.json` / `agent_b.json` に保存。
-  - `all_sessions_export.json` の各セッションにも `relationships` を含めて出力。
+| フラグ                                 | 説明                                                         |
+| -------------------------------------- | ------------------------------------------------------------ |
+| `--relationship-reflection`            | 7 点スケールの関係内省を有効化                               |
+| `--relationship-reflection-every-turn` | 毎ターン、発話者視点で内省を計算                             |
+| `--relationship-reflection-no-inject`  | 内省は計算するがプロンプトには注入しない（アブレーション用） |
 
-- トランスクリプト表示: `scripts/export_transcript.py`
-  - 各セッションの末尾に関係値を表示（`by_speaker` があれば実名で、無ければ A→B/B→A）。
+---
+
+## パイプライン統合
+
+`generative_agents/generate_conversations.py` での統合:
+
+- **Assessment**: `--relationships` 有効時、各セッション終了後に `get_session_relationships()` を呼び出し
+- **Reflection**: `--relationship-reflection` 有効時、HLQ + 根拠パイプラインで内省値を計算
+- 結果は `session_{n}_relationships` / `session_{n}_relationship_reflection` として `agent_a.json` / `agent_b.json` に保存
+- `--relationship-reflection-no-inject` がない場合、内省値は次ターンのプロンプトに注入される
+
+### プロンプトへの注入
+
+`get_agent_query()` 関数で以下を追加:
+
+```
+Relationship reflection (7-point -3..+3):
+Alice -> Bob: Intimacy=2, Power=1
+この値を参考に、親密度・力関係を調整してください。
+```
+
+---
+
+## トランスクリプト表示
+
+`scripts/export_transcript.py` で各セッションの末尾に関係値を表示:
+
+```markdown
+**Relationship scores:**
+
+- Alice → Bob: intimacy=7, power=4, social_distance=3, trust=6
+- Bob → Alice: intimacy=6, power=5, social_distance=4, trust=7
+```
+
+---
 
 ## 使い方
 
-- ランナー: `scripts/generate_conversations.sh` は `--relationships` を有効化済みです。他のパラメータと組み合わせて実行してください。
-- 出力の確認場所:
-  - `out/<run>/agent_a.json` / `agent_b.json` 内の `session_{n}_relationships`
-  - `out/<run>/all_sessions_export.json`（各 `sessions[*].relationships`）
-  - `scripts/export_transcript.py` 実行で生成される Markdown にも関係値が表示されます。
+### 基本実行
 
-## 今後の拡張（任意）
+```bash
+# generate_conversations.sh はデフォルトで relationship-reflection を有効化
+bash scripts/generate_conversations.sh --persona-dir personas/senpai_kouhai
+```
 
-- 継続的関係値: 前セッションまでの移動平均や指数移動平均による“長期的関係ベクトル”を保持し、次セッションのプロンプトへコンテキストとして与える。
-- 根拠の保存: どの発話に基づきそのスコアになったのか（ダイアログ ID と理由文）を `rationale` として出力し、トランスクリプトにも併記。
-- プロンプトへの直接活用: `--relationship-context` のようなフラグを追加し、直前セッションの関係値を会話生成プロンプトへ注入して応答のトーンへ反映（デフォルトは現状維持で安全に）。
+### 現在のデフォルト設定（`generate_conversations.sh`）
+
+```bash
+python3 generative_agents/generate_conversations.py \
+    --session --reflection --memory-topk 3 \
+    --num-sessions 3 --exact-turns-per-session 10 \
+    --relationship-reflection --relationship-reflection-every-turn \
+    --relationship-reflection-no-inject \
+    --session-topics-file ./topics/relationship_senpai_tekitai.json \
+    --lang ja
+```
+
+### 出力の確認場所
+
+| ファイル                                      | 内容                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------ |
+| `out/<run>/agent_a.json`                      | `session_{n}_relationships`, `session_{n}_relationship_reflection` |
+| `out/<run>/rr_prompt_trace_session_{n}.jsonl` | 関係内省のプロンプトトレース（デバッグ用）                         |
+| `out/<run>/agent_a_transcript.md`             | 人間可読なトランスクリプト                                         |
+
+### 結果の可視化
+
+```bash
+python scripts/plot_relationship_reflection.py \
+    out/with_inject/agent_a.json \
+    out/without_inject/agent_a.json \
+    --labels "注入あり" "注入なし" \
+    -o comparison.png
+```
+
+---
+
+## 関連ドキュメント
+
+- [RELATIONSHIP_REFLECTION_FLOW.md](./RELATIONSHIP_REFLECTION_FLOW.md): 関係内省の詳細フロー
+- [GENERATION_METHOD.md](./GENERATION_METHOD.md): 会話生成パイプラインの全体像

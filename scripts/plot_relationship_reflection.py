@@ -227,18 +227,26 @@ def plot_comparison(filepaths: List[str], labels: List[str], session_ids: Option
     linestyles = ['-', '--', '-.', ':']
     colors = plt.cm.tab10.colors
     
-    # まず全ファイルを読んで TaskOriented があるか確認
+    # まず全ファイルを読んで TaskOriented があるか確認し、方向ごとの色マッピングを作成
     all_timelines = []
     has_task = False
+    direction_set = set()  # 全ての方向 (speaker→toward) を収集
+    
     for filepath in filepaths:
         agent = load_agent_data(filepath)
         timelines = extract_rr_timeline(agent, session_ids)
         all_timelines.append(timelines)
         if timelines:
-            for data in timelines.values():
+            for speaker, data in timelines.items():
+                if data:
+                    toward = data[0].get('toward', '?')
+                    direction_set.add(f"{speaker}→{toward}")
                 if any(e.get('TaskOriented') is not None for e in data):
                     has_task = True
-                    break
+    
+    # 方向ごとに固定の色を割り当て
+    direction_list = sorted(direction_set)
+    direction_colors = {d: colors[i % len(colors)] for i, d in enumerate(direction_list)}
     
     num_plots = 3 if has_task else 2
     fig, axes = plt.subplots(num_plots, 1, figsize=(14, 4 * num_plots), sharex=True)
@@ -259,8 +267,9 @@ def plot_comparison(filepaths: List[str], labels: List[str], session_ids: Option
         linestyle = linestyles[file_idx % len(linestyles)]
         
         for spk_idx, (speaker, data) in enumerate(timelines.items()):
-            color = colors[spk_idx % len(colors)]
             toward = data[0].get('toward', '?') if data else '?'
+            direction_key = f"{speaker}→{toward}"
+            color = direction_colors.get(direction_key, colors[spk_idx % len(colors)])
             
             x_vals = list(range(len(data)))
             power_vals = [e.get('Power') for e in data]
