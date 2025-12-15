@@ -64,6 +64,8 @@ def parse_args():
     # Memory stream options
     parser.add_argument('--memory-stream', action='store_true', help='Enable memory stream: store facts/reflections and retrieve top-K memories each turn')  # 記憶を保存し各ターンで上位K件をリトリーブ
     parser.add_argument('--memory-topk', type=int, default=5, help='Top-K memories to retrieve per turn when memory stream is enabled')  # リトリーブ件数K
+    parser.add_argument('--memory-retrieve-inject', action='store_true', help='If set with --memory-stream, inject retrieved memories into generation prompts. If not set, memory is stored but not injected.')  # retrieve結果をプロンプトに注入するか
+    parser.add_argument('--reflection-evidence-topk', type=int, default=10, help='Number of recent memory entries to use as evidence candidates for relationship reflection')  # 関係性内省のエビデンス候補数
     parser.add_argument('--min-turns-before-stop', type=int, default=6, help='Do not include stop instruction until at least this turn index (0-based)')  # 終了指示[END]を入れ始める最小ターン
     parser.add_argument('--exact-turns-per-session', type=int, default=None, help='この値が指定された場合、セッションはちょうどNターン生成される。N-1ターンまでは[END]を出力させない（ストップ指示無効化）')  # ちょうどNターン生成
     parser.add_argument('--device', type=str, default='auto', choices=['auto','cpu','cuda','mps'], help='Device for BLIP model (auto: prefer cuda > mps > cpu)')  # 無効: 画像系モデルのデバイス
@@ -71,9 +73,120 @@ def parse_args():
     parser.add_argument('--lang', type=str, default='en', choices=['en','ja'], help='Conversation language (default en)')  # 会話の出力言語
     parser.add_argument('--session-topic', type=str, default=None, help='Optional conversation theme/topic to guide the dialogue (applied across turns)')  # 会話テーマ
     parser.add_argument('--session-topics-file', type=str, default=None, help='Path to JSON mapping of session id to topic. Accepts {"1":"...","2":"..."} or ["...","..."] (1-based).')  # セッション別テーマ
+    # シナリオファイル: 設定を一括で指定可能。連続会話モードもサポート
+    parser.add_argument('--scenario-file', type=str, default=None, help='Path to scenario JSON file. Consolidates settings, events, and supports continuous conversation mode.')
 
     args = parser.parse_args()
     return args
+
+
+def load_scenario_file(args):
+    """シナリオファイルを読み込み、args と events/settings を返す。
+    
+    シナリオファイルのフォーマット:
+    {
+      "mode": "continuous" または "session" (省略時は "session"),
+      "settings": {
+        "lang": "ja",
+        "num_sessions": 1,           // continuous モードでは 1 を推奨
+        "total_turns": 60,           // continuous モードでの総ターン数
+        "event_interval": 20,        // イベント切り替え間隔（ターン数）
+        "relationship_reflection": true,
+        "relationship_reflection_every_turn": true,
+        "memory_stream": true,
+        "memory_topk": 3,
+        "reflection": true
+      },
+      "events": [
+        {
+          "turn": 1,
+          "description": "最初の状況説明...",
+          "transition_hint": "(省略可) 前のイベントからの遷移説明"
+        },
+        {
+          "turn": 20,
+          "description": "次のイベント..."
+        }
+      ],
+      // 旧形式との互換: "topics" も受け付ける (セッション区切りモード用)
+      "topics": {"1": "...", "2": "..."}
+    }
+    """
+    if not args.scenario_file or not os.path.exists(args.scenario_file):
+        return args, None, {}
+    
+    try:
+        with open(args.scenario_file, 'r', encoding='utf-8') as f:
+            scenario = json.load(f)
+    except Exception as e:
+        logging.warning(f"Failed to load scenario file: {e}")
+        return args, None, {}
+    
+    # settings を args に反映（コマンドライン引数が未指定の場合のみ上書き）
+    settings = scenario.get('settings', {})
+    
+    # 文字列 -> bool 変換用ヘルパー
+    def _to_bool(val):
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() in ('true', '1', 'yes')
+        return bool(val)
+    
+    # 設定マッピング（scenario キー -> args 属性名 -> デフォルト値/型変換）
+    setting_mappings = {
+        'lang': ('lang', str),
+        'num_sessions': ('num_sessions', int),
+        'total_turns': ('exact_turns_per_session', int),  # continuous モードでは exact_turns として扱う
+        'max_turns_per_session': ('max_turns_per_session', int),
+        'event_interval': ('event_interval', int),
+        'relationship_reflection': ('relationship_reflection', _to_bool),
+        'relationship_reflection_every_turn': ('relationship_reflection_every_turn', _to_bool),
+        'relationship_reflection_no_inject': ('relationship_reflection_no_inject', _to_bool),
+        'memory_stream': ('memory_stream', _to_bool),
+        'memory_topk': ('memory_topk', int),
+        'memory_retrieve_inject': ('memory_retrieve_inject', _to_bool),
+        'reflection_evidence_topk': ('reflection_evidence_topk', int),
+        'reflection': ('reflection', _to_bool),
+        'reflection_every_turn': ('reflection_every_turn', _to_bool),
+        'facts': ('facts', _to_bool),
+        'summary': ('summary', _to_bool),
+    }
+    
+    for scenario_key, (arg_attr, converter) in setting_mappings.items():
+        if scenario_key in settings:
+            try:
+                setattr(args, arg_attr, converter(settings[scenario_key]))
+            except Exception:
+                pass
+    
+    # event_interval はシナリオファイル固有のため新規属性として追加
+    if not hasattr(args, 'event_interval'):
+        args.event_interval = settings.get('event_interval', 20)
+    
+    # モード判定
+    mode = scenario.get('mode', 'session')
+    args.continuous_mode = (mode == 'continuous')
+    
+    # events リストの取得
+    events = scenario.get('events', [])
+    
+    # 旧形式 topics との互換: events が空で topics がある場合はセッションモードとして扱う
+    session_topics = {}
+    if not events and 'topics' in scenario:
+        topics_data = scenario['topics']
+        if isinstance(topics_data, dict):
+            for k, v in topics_data.items():
+                try:
+                    session_topics[int(k)] = v
+                except Exception:
+                    continue
+        elif isinstance(topics_data, list):
+            for idx, v in enumerate(topics_data, start=1):
+                session_topics[idx] = v
+    
+    logging.info(f"Loaded scenario: mode={mode}, events={len(events)}, settings={list(settings.keys())}")
+    return args, events, session_topics
 
 
 # 画像キャプション機能は削除
@@ -413,7 +526,14 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
     return query
 
 
-def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time_string='', curr_sess_id=0, captioner=None, img_processor=None, reflection=False, session_topic=None):
+def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time_string='', curr_sess_id=0, captioner=None, img_processor=None, reflection=False, session_topic=None, events_list=None):
+    """会話セッションを生成する。
+    
+    Args:
+        events_list: 連続会話モードで使用するイベントリスト。
+                     [{"turn": N, "description": "..."}, ...] 形式。
+                     指定された場合、turn に応じてトピックを動的に切り替える。
+    """
     
     # load embeddings for retrieving relevant observations from previous conversations
     # if the embeddings file does not exist (e.g. --facts not used), proceed without fine-grained retrieval
@@ -429,6 +549,29 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         except Exception as e:
             logging.warning(f"Failed to load embeddings file {args.emb_file}: {e}. Proceeding without embeddings.")
             embeddings = None
+
+    # --- 連続会話モード: イベント管理の初期化 ---
+    current_event_idx = 0
+    current_event = None
+    event_history = []  # イベント切り替えの履歴を記録
+    if events_list and len(events_list) > 0:
+        # events_list を turn でソート
+        events_list = sorted(events_list, key=lambda x: x.get('turn', 0))
+        current_event = events_list[0]
+        # 最初のイベントを session_topic として設定（events_list が優先）
+        session_topic = current_event.get('description', session_topic)
+        # 初期イベントを履歴に記録
+        event_history.append({
+            'turn': 0,
+            'event_idx': 0,
+            'type': current_event.get('type', 'initial'),
+            'description': current_event.get('description', ''),
+            'transition_hint': current_event.get('transition_hint', '')
+        })
+        logging.info(f"========== [EVENT INJECTED] Turn 0 ==========")
+        logging.info(f"  Type: {current_event.get('type', 'initial')}")
+        logging.info(f"  Description: {current_event.get('description', '(none)')}")
+        logging.info(f"==============================================")
 
     # select one of the speakers to start the session at random
     curr_speaker = -1
@@ -459,11 +602,11 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
     # current in-session relationship_reflection snapshot (-3..+3 pair), default zeros
     def _zero_rr():
         return {
-            'a_to_b': {'Intimacy': 0, 'Power': 0},
-            'b_to_a': {'Intimacy': 0, 'Power': 0},
+            'a_to_b': {'Intimacy': 0, 'Power': 0, 'TaskOriented': 0},
+            'b_to_a': {'Intimacy': 0, 'Power': 0, 'TaskOriented': 0},
             'by_speaker': {
-                agent_a['name']: {'toward': agent_b['name'], 'vector': {'Intimacy': 0, 'Power': 0}},
-                agent_b['name']: {'toward': agent_a['name'], 'vector': {'Intimacy': 0, 'Power': 0}}
+                agent_a['name']: {'toward': agent_b['name'], 'vector': {'Intimacy': 0, 'Power': 0, 'TaskOriented': 0}},
+                agent_b['name']: {'toward': agent_a['name'], 'vector': {'Intimacy': 0, 'Power': 0, 'TaskOriented': 0}}
             }
         }
     # Carry-over: if previous session has relationship_reflection, start from it
@@ -519,6 +662,52 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 各ターンでのリトリーブ結果（テキストのみ）を収集するための一時領域
         retrieved_texts_for_turn = []
 
+        # --- 連続会話モード: イベント切り替えチェック ---
+        if events_list and len(events_list) > 0:
+            # 次のイベントがあるかチェック
+            if current_event_idx < len(events_list) - 1:
+                next_event = events_list[current_event_idx + 1]
+                next_turn = next_event.get('turn', float('inf'))
+                if i >= next_turn:
+                    current_event_idx += 1
+                    current_event = next_event
+                    new_topic = current_event.get('description', '')
+                    transition_hint = current_event.get('transition_hint', '')
+                    event_type = current_event.get('type', 'event')
+                    
+                    # イベント切り替え履歴を記録
+                    event_history.append({
+                        'turn': i,
+                        'event_idx': current_event_idx,
+                        'type': event_type,
+                        'description': new_topic,
+                        'transition_hint': transition_hint
+                    })
+                    
+                    # トピックを更新（遷移ヒントがあれば組み合わせる）
+                    if transition_hint:
+                        session_topic = f"{transition_hint}\n\n{new_topic}"
+                    else:
+                        session_topic = new_topic
+                    
+                    # 詳細なイベント注入ログ
+                    logging.info(f"========== [EVENT INJECTED] Turn {i} ==========")
+                    logging.info(f"  Event Index: {current_event_idx}")
+                    logging.info(f"  Type: {event_type}")
+                    if transition_hint:
+                        logging.info(f"  Transition: {transition_hint}")
+                    logging.info(f"  Description: {new_topic}")
+                    logging.info(f"==============================================")
+                    
+                    # イベント切り替え時に関係値を評価・記録（relationship_reflection が有効な場合）
+                    if args.relationship_reflection:
+                        try:
+                            rr_at_event = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target='both', session_dialog=session)
+                            event_history[-1]['relationship_reflection'] = rr_at_event
+                            logging.info(f"[continuous] Event change relationship snapshot recorded at turn {i}")
+                        except Exception as e:
+                            logging.debug(f"Failed to capture relationship at event change: {e}")
+
         # Before generating a turn, if intra-relationships is enabled and it's time, evaluate provisional relationships
         if args.intra_relationships and i > 0 and (i % args.intra_frequency) == 0:
             try:
@@ -544,7 +733,9 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 #直前の発話に対してretrieve（上位k件抽出）を行なっている
                 top = mem_a.retrieve(qtext or agent_a.get('persona_summary',''), topk=args.memory_topk, now_date=curr_date_time_string)
                 _log_retrieval(agent_a.get('name','A'), i, top)
-                mem_snip = MemoryStore.format_snippet(top, lang=args.lang)
+                # memory_retrieve_inject が有効な場合のみプロンプトに注入
+                if getattr(args, 'memory_retrieve_inject', False):
+                    mem_snip = MemoryStore.format_snippet(top, lang=args.lang)
                 # エクスポート用にテキストのみ保持
                 try:
                     retrieved_texts_for_turn = [e.get('text') for e in (top or []) if isinstance(e, dict) and e.get('text')]
@@ -576,7 +767,9 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 qtext = '' if i == 0 else (session[-1]['speaker'] + ' says, ' + session[-1]['clean_text'])
                 top = mem_b.retrieve(qtext or agent_b.get('persona_summary',''), topk=args.memory_topk, now_date=curr_date_time_string)
                 _log_retrieval(agent_b.get('name','B'), i, top)
-                mem_snip = MemoryStore.format_snippet(top, lang=args.lang)
+                # memory_retrieve_inject が有効な場合のみプロンプトに注入
+                if getattr(args, 'memory_retrieve_inject', False):
+                    mem_snip = MemoryStore.format_snippet(top, lang=args.lang)
                 # エクスポート用にテキストのみ保持
                 try:
                     retrieved_texts_for_turn = [e.get('text') for e in (top or []) if isinstance(e, dict) and e.get('text')]
@@ -606,8 +799,11 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 画像関連機能無効化 (placeholder)
         # if args.image_search ...
 
+        # 発話生成用の完全なプロンプトを構築
+        full_prompt = agent_query + conv_so_far
+        
         # トークン上限を拡大（Gemini 2.5 thinking対応で1000トークンに増加）
-        raw = run_chatgpt(agent_query + conv_so_far, 1, 1000, 'chatgpt', temperature=1.2)
+        raw = run_chatgpt(full_prompt, 1, 1000, 'chatgpt', temperature=1.2)
         raw = ' '.join(raw.strip().splitlines())
         cleaned = clean_dialog(raw, agent_a['name'] if curr_speaker == 0 else agent_b['name'])
         output = {"text": cleaned, "raw_text": cleaned}
@@ -628,6 +824,27 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         output["dia_id"] = f'D{curr_sess_id}:{i+1}'
         # 各ターンのリトリーブ結果（テキスト配列）を保存（エクスポート用）
         output["retrieved"] = retrieved_texts_for_turn or []
+        # 発話生成に使用したプロンプトを記録
+        output["generation_prompt"] = full_prompt
+        # 現在のイベント情報を記録
+        if current_event:
+            output["current_event"] = {
+                'event_idx': current_event_idx,
+                'type': current_event.get('type', ''),
+                'description': current_event.get('description', '')
+            }
+        # 関係値情報を記録（注入/非注入を区別）
+        if args.relationship_reflection and current_relationship_reflection:
+            is_injected = not getattr(args, 'relationship_reflection_no_inject', False)
+            speaker_name = output.get('speaker')
+            if speaker_name and 'by_speaker' in current_relationship_reflection:
+                speaker_rr = current_relationship_reflection['by_speaker'].get(speaker_name, {})
+                output["relationship_reflection_used"] = {
+                    'speaker': speaker_name,
+                    'toward': speaker_rr.get('toward', ''),
+                    'vector': speaker_rr.get('vector', {}),
+                    'injected': is_injected
+                }
         session.append(output)
         # --- export minimal per-turn trace (utterance + retrieved + relationship_reflection used-direction) ---
         try:
@@ -814,7 +1031,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 # Next speaker: curr_speaker has been toggled already above
                 next_is_a = (curr_speaker == 0)
                 target = 'a' if next_is_a else 'b'
-                rr_next = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target=target)
+                rr_next = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target=target, session_dialog=session)
                 # Merge into current snapshot, preserving the opposite direction
                 if next_is_a:
                     current_relationship_reflection['a_to_b'] = rr_next.get('a_to_b', current_relationship_reflection['a_to_b'])
@@ -844,6 +1061,9 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         if args.exact_turns_per_session is not None and (i+1) >= args.exact_turns_per_session:
             break
 
+    # 連続会話モードの場合、イベント履歴を返す
+    if events_list and len(event_history) > 0:
+        return session, event_history
     return session
 
 
@@ -858,8 +1078,15 @@ def main():
 
     args.emb_file = os.path.join(args.out_dir, args.emb_file)
 
-    # セッション別テーマの読み込み（任意）
-    session_topics = {}
+    # シナリオファイルの読み込み（--scenario-file が指定されている場合）
+    events_list = None
+    scenario_session_topics = {}
+    if args.scenario_file:
+        args, events_list, scenario_session_topics = load_scenario_file(args)
+        logging.info(f"Scenario loaded: continuous_mode={getattr(args, 'continuous_mode', False)}, events={len(events_list) if events_list else 0}")
+
+    # セッション別テーマの読み込み（任意）- シナリオファイルの topics または --session-topics-file から
+    session_topics = scenario_session_topics.copy() if scenario_session_topics else {}
     if args.session_topics_file and os.path.exists(args.session_topics_file):
         try:
             with open(args.session_topics_file, 'r', encoding='utf-8') as tf:
@@ -931,6 +1158,7 @@ def main():
     for j in range(args.start_session, args.num_sessions+1):
 
         # このセッションに適用するテーマ（単一指定 > ファイル指定の順で優先）
+        # 連続会話モードでは events_list を使用するため session_topic は初期値のみ
         session_topic = args.session_topic if args.session_topic else session_topics.get(j)
 
         print("******************* SESSION %s ******************" % j)
@@ -953,12 +1181,24 @@ def main():
                 agent_b['session_%s_topic' % j] = session_topic
             save_agents([agent_a, agent_b], args)
 
-            session = get_session(
+            # 連続会話モードかどうかで呼び出し方を分岐
+            result = get_session(
                 agent_a, agent_b, args,
                 prev_date_time_string=prev_date_time_string, curr_date_time_string=curr_date_time_string,
                 curr_sess_id=j, captioner=captioner, img_processor=img_processor, reflection=args.reflection,
-                session_topic=session_topic
+                session_topic=session_topic,
+                events_list=events_list if getattr(args, 'continuous_mode', False) else None
             )
+            
+            # 連続会話モードの場合は (session, event_history) のタプルが返る
+            if isinstance(result, tuple):
+                session, event_history = result
+                # イベント履歴をエージェントに保存
+                agent_a['session_%s_event_history' % j] = event_history
+                agent_b['session_%s_event_history' % j] = event_history
+                logging.info(f"[continuous] Session {j} completed with {len(event_history)} event transitions")
+            else:
+                session = result
 
             agent_a['session_%s' % j] = session
             agent_b['session_%s' % j] = session
@@ -1088,7 +1328,18 @@ def main():
 
     # 生成された全セッションを JSON として out-dir に書き出し
     export_path = os.path.join(args.out_dir, 'all_sessions_export.json')
+    
+    # コマンド引数を記録
+    args_dict = vars(args).copy()
+    # 保存不可能なオブジェクトを除外
+    for key in list(args_dict.keys()):
+        try:
+            json.dumps(args_dict[key])
+        except (TypeError, ValueError):
+            args_dict[key] = str(args_dict[key])
+    
     export_payload = {
+        'command_args': args_dict,
         'agent_a': agent_a['name'],
         'agent_b': agent_b['name'],
         'language': args.lang,
@@ -1098,41 +1349,96 @@ def main():
         if k.startswith('session_') and k.split('_')[-1].isdigit():
             sid = k.split('_')[-1]
             if isinstance(v, list):  # 会話本体
-                # 元のフル出力（dialog に v 全体を入れる）はユーザー要望によりコメントアウト
-                # export_payload['sessions'].append({
-                #     'session_id': int(sid),
-                #     'date_time': agent_a.get(f'session_{sid}_date_time'),
-                #     'dialog': v,
-                #     'facts': agent_a.get(f'session_{sid}_facts'),
-                #     'reflection': agent_a.get(f'session_{sid}_reflection'),
-                #     'summary': agent_a.get(f'session_{sid}_summary'),
-                #     'relationships': agent_a.get(f'session_{sid}_relationships')
-                # })
-                # 簡略形式: 各発話の speaker, clean_txt, retrieved のみを出力
-                simplified_dialog = []
+                # 拡張形式: 発話、関係値、想起、イベントを含む
+                enriched_dialog = []
+                last_event_turn = -1
                 for d in v:
                     if not isinstance(d, dict):
                         continue
-                    simplified_dialog.append({
+                    turn_idx = len(enriched_dialog)
+                    
+                    # イベント切り替えがあれば、会話の前に挿入
+                    current_ev = d.get('current_event')
+                    if current_ev:
+                        ev_turn = current_ev.get('event_idx', 0)
+                        # 新しいイベントの場合のみ挿入
+                        if ev_turn > 0 and enriched_dialog and 'event_change' not in enriched_dialog[-1]:
+                            # イベント変更マーカーを直前に確認
+                            pass
+                    
+                    entry = {
+                        'turn': turn_idx,
                         'speaker': d.get('speaker'),
-                        'clean_txt': d.get('clean_text', ''),
-                        'retrieved': d.get('retrieved', [])
-                    })
+                        'utterance': d.get('clean_text', '')
+                    }
+                    
+                    # 関係値情報（注入/非注入を区別）
+                    rr_used = d.get('relationship_reflection_used')
+                    if rr_used:
+                        entry['relationship_reflection'] = {
+                            'from': rr_used.get('speaker'),
+                            'toward': rr_used.get('toward'),
+                            'vector': rr_used.get('vector'),
+                            'was_injected': rr_used.get('injected', False)
+                        }
+                    
+                    # 想起情報
+                    retrieved = d.get('retrieved', [])
+                    if retrieved:
+                        entry['retrieved_memories'] = retrieved
+                    
+                    # 現在のイベント情報
+                    if current_ev:
+                        entry['active_event'] = {
+                            'event_idx': current_ev.get('event_idx'),
+                            'type': current_ev.get('type'),
+                            'description': current_ev.get('description')
+                        }
+                    
+                    enriched_dialog.append(entry)
+                
+                # イベント履歴を取得（relationship_reflection_turns から event_history を抽出）
+                event_hist = agent_a.get(f'session_{sid}_event_history', [])
+                
                 export_payload['sessions'].append({
                     'session_id': int(sid),
                     'date_time': agent_a.get(f'session_{sid}_date_time'),
                     'topic': agent_a.get(f'session_{sid}_topic'),
-                    'dialog': simplified_dialog,
+                    'event_history': event_hist,
+                    'dialog': enriched_dialog,
+                    'final_relationship_reflection': agent_a.get(f'session_{sid}_relationship_reflection'),
                     'facts': agent_a.get(f'session_{sid}_facts'),
                     'reflection': agent_a.get(f'session_{sid}_reflection'),
                     'summary': agent_a.get(f'session_{sid}_summary'),
-                    'relationships': agent_a.get(f'session_{sid}_relationships'),
-                    'relationship_reflection': agent_a.get(f'session_{sid}_relationship_reflection')
+                    'relationships': agent_a.get(f'session_{sid}_relationships')
                 })
     export_payload['sessions'] = sorted(export_payload['sessions'], key=lambda x: x['session_id'])
     with open(export_path, 'w') as f:
         json.dump(export_payload, f, ensure_ascii=False, indent=2)
     logging.info(f"Exported all sessions JSON to {export_path}")
+
+    # --- プロンプトと発話のペアをファイルに出力 ---
+    prompt_export_path = os.path.join(args.out_dir, 'prompt_utterance_pairs.jsonl')
+    try:
+        with open(prompt_export_path, 'w', encoding='utf-8') as pf:
+            for k, v in agent_a.items():
+                if k.startswith('session_') and k.split('_')[-1].isdigit():
+                    sid = k.split('_')[-1]
+                    if isinstance(v, list):
+                        for turn_idx, d in enumerate(v):
+                            if not isinstance(d, dict):
+                                continue
+                            entry = {
+                                'session_id': int(sid),
+                                'turn': turn_idx,
+                                'speaker': d.get('speaker'),
+                                'utterance': d.get('clean_text', ''),
+                                'prompt': d.get('generation_prompt', '')
+                            }
+                            pf.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        logging.info(f"Exported prompt-utterance pairs to {prompt_export_path}")
+    except Exception as e:
+        logging.warning(f"Failed to export prompt-utterance pairs: {e}")
 
     # --- メモリストリームが空なら facts/reflection から自動バックフィル ---
     if args.memory_stream:

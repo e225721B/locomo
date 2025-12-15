@@ -64,7 +64,7 @@ def set_openai_key():
 
 def run_json_trials(query, num_gen=1, num_tokens_request=1000,
                     model='davinci', use_16k=False, temperature=1.0, wait_time=1,
-                    examples=None, input=None, max_retries: int = 10, retry_delay: float = 1.0):
+                    examples=None, input=None, max_retries: int = 10, retry_delay: float = 2.0):
     """LLM から JSON を取得するユーティリティ (Gemini 用・堅牢版)。
 
     改善点:
@@ -227,7 +227,7 @@ def run_gemini(model, content: str, max_tokens: int = 0, temperature: float = 1.
             "temperature": temperature,
         }
         if max_tokens:
-            gen_config["max_output_tokens"] = max_tokens
+            gen_config["max_output_tokens"] = max(max_tokens, 100)  # 最低100トークンを確保
         if candidate_count > 1:
             gen_config["candidate_count"] = candidate_count
         
@@ -251,6 +251,15 @@ def run_gemini(model, content: str, max_tokens: int = 0, temperature: float = 1.
         }
         
         response = model.generate_content(content, generation_config=gen_config, safety_settings=safety_settings)
+        
+        # レスポンスの終了理由をチェック
+        if hasattr(response, 'candidates') and response.candidates:
+            c0 = response.candidates[0]
+            finish_reason = getattr(c0, 'finish_reason', None)
+            # finish_reason が MAX_TOKENS や STOP 以外の場合は警告
+            if finish_reason and str(finish_reason) not in ('FinishReason.STOP', 'STOP', 'FinishReason.MAX_TOKENS', 'MAX_TOKENS', '1', '2'):
+                print(f"[Gemini] Unusual finish_reason: {finish_reason}")
+        
         # 複数候補
         if hasattr(response, 'candidates') and response.candidates and candidate_count > 1:
             texts = []
@@ -292,8 +301,8 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
     Returns:
         str | List[str]: num_gen=1 なら文字列、>1 なら文字列リスト
     """
-    # モデル名 (gemini-2.5-flash: thinking無効化により安定動作)
-    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+    # モデル名 (gemini-2.0-flash: より安定した動作のため)
+    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.0-flash")
     
     def _normalize_gemini_model_name(name: str) -> str:
         # SDK により "models/" プレフィックスの有無が異なるため吸収

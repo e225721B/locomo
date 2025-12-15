@@ -135,6 +135,44 @@ RELN_REFLECT_PROMPT_JA = (
     "高レベル質問:\n{hlq}\n\n根拠（番号付き）:\n{evid}\n"
 )
 
+# 各次元ごとに個別の質問とエビデンスを渡す新プロンプト（日本語）
+RELN_REFLECT_PROMPT_SPLIT_JA = (
+    "以下の3つの関係性次元について、それぞれに対応する質問と根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n\n"
+    "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
+    "【Power（力関係）】\n"
+    "評価基準: {src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる。\n"
+    "質問: {q_power}\n"
+    "根拠:\n{evid_power}\n\n"
+    "【Intimacy（親密度）】\n"
+    "評価基準: {src} が {dst} に対して感じる近しさ・好意の度合い。高いほど親しい。\n"
+    "質問: {q_intimacy}\n"
+    "根拠:\n{evid_intimacy}\n\n"
+    "【TaskOriented（タスク指向対話）】\n"
+    "評価基準: やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的。\n"
+    "質問: {q_task}\n"
+    "根拠:\n{evid_task}\n\n"
+    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"TaskOriented\":-3..+3}}。JSON 以外の文章は書かないでください。\n"
+)
+
+# 各次元ごとに個別の質問とエビデンスを渡す新プロンプト（英語）
+RELN_REFLECT_PROMPT_SPLIT_EN = (
+    "Rate a 7-point relationship reflection FROM {src} TO {dst} using the dimension-specific questions and evidence below.\n\n"
+    "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
+    "【Power】\n"
+    "Criterion: Perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful.\n"
+    "Question: {q_power}\n"
+    "Evidence:\n{evid_power}\n\n"
+    "【Intimacy】\n"
+    "Criterion: Degree of closeness/affection {src} feels toward {dst}. Higher means closer.\n"
+    "Question: {q_intimacy}\n"
+    "Evidence:\n{evid_intimacy}\n\n"
+    "【TaskOriented】\n"
+    "Criterion: How task-oriented the dialogue is. Higher means more task-focused, lower means more social/casual.\n"
+    "Question: {q_task}\n"
+    "Evidence:\n{evid_task}\n\n"
+    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Power\":-1,\"Intimacy\":2,\"TaskOriented\":1}}. No extra text.\n"
+)
+
 
 RETRIEVAL_MODEL = os.environ.get("GEMINI_EMBED_MODEL", "models/text-embedding-004")
 
@@ -691,7 +729,7 @@ def _ensure_rr_schema(obj: dict) -> dict:
         'TaskOriented': _rr_coerce(obj.get('TaskOriented', 0)),
     }
 
-def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str = 'both'):
+def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str = 'both', session_dialog=None, min_turns_required: int = 3, evidence_topk: int = None):
     """Compute 7-point (-3..+3) relationship reflection vector using HLQ + evidence pipeline.
     Returns dict:
       {
@@ -700,8 +738,22 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
         'by_speaker': { A_name: {toward: B_name, vector:{...}}, B_name: {...} }
       }
     target: 'a' | 'b' | 'both'
+    session_dialog: optional list of dialog entries to use instead of/in addition to memory stream
+    min_turns_required: minimum number of conversation turns required to compute; returns zeros if fewer
+    evidence_topk: number of recent memory entries to use as evidence candidates (default: args.reflection_evidence_topk or 10)
     """
     lang = getattr(args, 'lang', 'en')
+    
+    # ゼロ値を返すヘルパー
+    def _zero_result():
+        return {
+            'a_to_b': {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0},
+            'b_to_a': {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0},
+            'by_speaker': {
+                agent_a['name']: {'toward': agent_b['name'], 'vector': {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}},
+                agent_b['name']: {'toward': agent_a['name'], 'vector': {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}}
+            }
+        }
 
     # Collect recent memories (same policy as reflections)
     def _collect(limit: int = 10):
@@ -726,6 +778,21 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             _from(agent_b)
         else:
             _from(agent_a); _from(agent_b)
+        
+        # session_dialog が渡されていれば、それも entries に追加
+        if session_dialog and isinstance(session_dialog, list):
+            sess_date = agent_a.get(f'session_{session_idx}_date_time') or datetime.utcnow().strftime('%d %B, %Y')
+            for d in session_dialog:
+                if isinstance(d, dict):
+                    entries.append({
+                        'text': d.get('clean_text') or d.get('text',''),
+                        'created_at': sess_date,
+                        'importance': 5,
+                        'embedding': [],
+                        'source': 'conversation',
+                        'who': d.get('speaker')
+                    })
+        
         if not entries:
             primary = agent_a if target != 'b' else agent_b
             sess = primary.get(f'session_{session_idx}') or []
@@ -751,6 +818,20 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             return datetime.utcnow()
         entries.sort(key=lambda x: _to_dt(x.get('created_at') or ''), reverse=True)
         return entries[:limit]
+    
+    # 会話データが不十分な場合はゼロ値を返す
+    # session_dialog があればそのターン数をチェック、なければ agent のセッションデータをチェック
+    dialog_count = 0
+    if session_dialog and isinstance(session_dialog, list):
+        dialog_count = len(session_dialog)
+    else:
+        primary = agent_a if target != 'b' else agent_b
+        sess = primary.get(f'session_{session_idx}') or []
+        dialog_count = len(sess)
+    
+    if dialog_count < min_turns_required:
+        logging.info(f"[rr] Skipping relationship_reflection: only {dialog_count} turns (min {min_turns_required} required)")
+        return _zero_result()
 
     def _embed_list(texts: List[str]):
         try:
@@ -783,7 +864,9 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             return [0.5 for _ in xs]
         return [(x-mn)/(mx-mn) for x in xs]
 
-    recent = _collect(limit=10)
+    # エビデンス候補数: 引数 > args設定 > デフォルト10
+    _evidence_limit = evidence_topk or getattr(args, 'reflection_evidence_topk', 10)
+    recent = _collect(limit=_evidence_limit)
     recent_texts = [e.get('text','') for e in recent]
     # HLQ generation (Gemini 2.5 thinking対応で3000トークンに増加)
     joined = '\n- '.join([t for t in recent_texts if t])
@@ -811,58 +894,125 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
                 e['embedding'] = get_openai_embedding([e.get('text','')], RETRIEVAL_MODEL)[0]
             except Exception:
                 e['embedding'] = []
-    q_embs = _embed_list(hlq)
-    relevances=[]; importances=[]; recencies=[]; raws=[]
+    
+    # --- 各次元ごとに個別にスコアリングしてエビデンスを選定 ---
+    # hlq[0]=Power用, hlq[1]=Intimacy用, hlq[2]=TaskOriented用 と仮定
+    q_embs = _embed_list(hlq)  # 3つの質問のembedding
     now_dt = datetime.utcnow()
+    
+    # 各メモリに対して基本スコア（importance, recency）を計算
+    base_scores = []
     for e in recent:
-        sim = 0.0
-        emb_val = _safe_get_embedding(e, 'embedding', [])
-        emb_floats = list(map(float, emb_val)) if len(emb_val) > 0 else []
-        for qe in q_embs:
-            sim = max(sim, _cos(emb_floats, qe))
-        relevances.append(sim)
-        importances.append(float(e.get('importance',5)))
+        importance = float(e.get('importance', 5))
         created = e.get('created_at') or now_dt.isoformat()
         try:
             cdt = datetime.fromisoformat(created)
         except Exception:
             cdt = now_dt
-        hours = max(0.0, (now_dt - cdt).total_seconds()/3600.0)
-        recencies.append(float(np.power(0.995, hours)))
-        raws.append(e)
-    rel_n=_minmax(relevances); imp_n=_minmax(importances); rec_n=_minmax(recencies)
-    scored=[]
-    for i,e in enumerate(raws):
-        e['combined_score']=rel_n[i]+imp_n[i]+rec_n[i]
-        scored.append(e)
-    scored.sort(key=lambda x: x.get('combined_score',0.0), reverse=True)
-    lines=[]
-    char_budget=2200
-    for e in scored:
-        tag = e.get('who') or 'Agent'
-        txt = (e.get('text') or '').strip()
-        line=f'[{tag}] {txt}'
-        if sum(len(l) for l in lines)+len(line)+10 > char_budget:
-            break
-        lines.append(line)
-        if len(lines) >= 14:
-            break
-    numbered=[f'{i+1}. {s}' for i,s in enumerate(lines)]
+        hours = max(0.0, (now_dt - cdt).total_seconds() / 3600.0)
+        recency = float(np.power(0.995, hours))
+        base_scores.append({'entry': e, 'importance': importance, 'recency': recency})
+    
+    def _score_for_question(q_emb, char_budget=700, max_items=5):
+        """特定の質問に対してスコアリングし、上位エビデンスを返す"""
+        scored = []
+        relevances = []
+        importances = []
+        recencies = []
+        for bs in base_scores:
+            e = bs['entry']
+            emb_val = _safe_get_embedding(e, 'embedding', [])
+            emb_floats = list(map(float, emb_val)) if len(emb_val) > 0 else []
+            sim = _cos(emb_floats, q_emb) if emb_floats and q_emb else 0.0
+            relevances.append(sim)
+            importances.append(bs['importance'])
+            recencies.append(bs['recency'])
+            scored.append(e)
+        
+        # 正規化
+        rel_n = _minmax(relevances)
+        imp_n = _minmax(importances)
+        rec_n = _minmax(recencies)
+        
+        # 合成スコアでソート
+        ranked = []
+        for i, e in enumerate(scored):
+            combined = rel_n[i] + imp_n[i] + rec_n[i]
+            ranked.append((combined, e))
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        
+        # 上位を選択
+        lines = []
+        for _, e in ranked:
+            tag = e.get('who') or 'Agent'
+            txt = (e.get('text') or '').strip()
+            line = f'[{tag}] {txt}'
+            if sum(len(l) for l in lines) + len(line) + 10 > char_budget:
+                break
+            lines.append(line)
+            if len(lines) >= max_items:
+                break
+        return lines
+    
+    # 各次元ごとにエビデンスを選定
+    evid_power_lines = _score_for_question(q_embs[0] if len(q_embs) > 0 else [])
+    evid_intimacy_lines = _score_for_question(q_embs[1] if len(q_embs) > 1 else [])
+    evid_task_lines = _score_for_question(q_embs[2] if len(q_embs) > 2 else [])
+    
+    # 番号付きテキストに変換
+    evid_power_numbered = [f'{i+1}. {s}' for i, s in enumerate(evid_power_lines)]
+    evid_intimacy_numbered = [f'{i+1}. {s}' for i, s in enumerate(evid_intimacy_lines)]
+    evid_task_numbered = [f'{i+1}. {s}' for i, s in enumerate(evid_task_lines)]
+    
+    evid_power_block = '\n'.join(evid_power_numbered) if evid_power_numbered else '(なし)'
+    evid_intimacy_block = '\n'.join(evid_intimacy_numbered) if evid_intimacy_numbered else '(なし)'
+    evid_task_block = '\n'.join(evid_task_numbered) if evid_task_numbered else '(なし)'
+    
+    # 後方互換用の統合エビデンス（トレース用）
+    all_lines = list(set(evid_power_lines + evid_intimacy_lines + evid_task_lines))
+    numbered = [f'{i+1}. {s}' for i, s in enumerate(all_lines[:14])]
     hlq_block = '\n- ' + '\n- '.join(hlq)
     evid_block = '\n'.join(numbered)
+    
     src_p = (agent_a.get('persona_summary') or '').strip()
     dst_p = (agent_b.get('persona_summary') or '').strip()
-    if lang=='ja':
-        p_ab = RELN_REFLECT_PROMPT_JA.format(src=agent_a['name'], dst=agent_b['name'], hlq=hlq_block, evid=evid_block, src_persona=src_p, dst_persona=dst_p)
-        p_ba = RELN_REFLECT_PROMPT_JA.format(src=agent_b['name'], dst=agent_a['name'], hlq=hlq_block, evid=evid_block, src_persona=dst_p, dst_persona=src_p)
+    
+    # 新しい分割プロンプトを使用
+    if lang == 'ja':
+        p_ab = RELN_REFLECT_PROMPT_SPLIT_JA.format(
+            src=agent_a['name'], dst=agent_b['name'],
+            src_persona=src_p, dst_persona=dst_p,
+            q_power=hlq[0], evid_power=evid_power_block,
+            q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
+            q_task=hlq[2], evid_task=evid_task_block
+        )
+        p_ba = RELN_REFLECT_PROMPT_SPLIT_JA.format(
+            src=agent_b['name'], dst=agent_a['name'],
+            src_persona=dst_p, dst_persona=src_p,
+            q_power=hlq[0], evid_power=evid_power_block,
+            q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
+            q_task=hlq[2], evid_task=evid_task_block
+        )
     else:
-        p_ab = RELN_REFLECT_PROMPT_EN.format(src=agent_a['name'], dst=agent_b['name'], hlq=hlq_block, evid=evid_block, src_persona=src_p, dst_persona=dst_p)
-        p_ba = RELN_REFLECT_PROMPT_EN.format(src=agent_b['name'], dst=agent_a['name'], hlq=hlq_block, evid=evid_block, src_persona=dst_p, dst_persona=src_p)
+        p_ab = RELN_REFLECT_PROMPT_SPLIT_EN.format(
+            src=agent_a['name'], dst=agent_b['name'],
+            src_persona=src_p, dst_persona=dst_p,
+            q_power=hlq[0], evid_power=evid_power_block,
+            q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
+            q_task=hlq[2], evid_task=evid_task_block
+        )
+        p_ba = RELN_REFLECT_PROMPT_SPLIT_EN.format(
+            src=agent_b['name'], dst=agent_a['name'],
+            src_persona=dst_p, dst_persona=src_p,
+            q_power=hlq[0], evid_power=evid_power_block,
+            q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
+            q_task=hlq[2], evid_task=evid_task_block
+        )
 
     # --- Trace: write prompt components to a dedicated JSONL file ---
     try:
         trace_path = os.path.join(getattr(args, 'out_dir', '.'), f'rr_prompt_trace_session_{session_idx}.jsonl')
-        # common payload pieces
+        # common payload pieces (新形式: 各次元ごとのエビデンスも含む)
         base_payload = {
             'time': datetime.utcnow().isoformat(),
             'session_idx': session_idx,
@@ -871,6 +1021,21 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             'hlq_block': hlq_block.strip(),
             'evidence_numbered': numbered,
             'evidence_block': evid_block.strip(),
+            # 各次元ごとの詳細
+            'per_dimension': {
+                'Power': {
+                    'question': hlq[0] if len(hlq) > 0 else '',
+                    'evidence': evid_power_numbered,
+                },
+                'Intimacy': {
+                    'question': hlq[1] if len(hlq) > 1 else '',
+                    'evidence': evid_intimacy_numbered,
+                },
+                'TaskOriented': {
+                    'question': hlq[2] if len(hlq) > 2 else '',
+                    'evidence': evid_task_numbered,
+                },
+            },
         }
         # A -> B
         if target in ('a', 'both'):

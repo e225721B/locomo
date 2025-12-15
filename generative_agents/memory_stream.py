@@ -78,7 +78,8 @@ class MemoryStore:
     def _score_importance(self, text: str) -> int:
         prompt = (IMPORTANCE_PROMPT_JA if self.lang == 'ja' else IMPORTANCE_PROMPT_EN).format(mem=text)
         try:
-            obj = run_json_trials(prompt, model='chatgpt', num_tokens_request=80)
+            # トークン数を増やし、リトライ回数を減らして高速化
+            obj = run_json_trials(prompt, model='chatgpt', num_tokens_request=150, max_retries=3)
             if isinstance(obj, dict):
                 for k, v in obj.items():
                     kk = str(k).strip().strip('"').strip("'").lower()
@@ -230,7 +231,10 @@ class MemoryStore:
             e['retrieval_score'] = score
             scored.append((score, e))
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = [e for _, e in scored[:max(1, topk)]]
+        # topk=0 の場合は空リストを返す
+        if topk <= 0:
+            return []
+        top = [e for _, e in scored[:topk]]
         self.agent['memory_stream'] = self.entries
         return top
 
