@@ -17,7 +17,7 @@ PERSONA_FROM_MSC_PROMPT = (
 EVENT2QUERY_PROMPT = "Let's write short image search queries in order to find a suitable image for illustrating the given events. Queries should not include names of people, years and other irrelevant details. For example:\n\nInput: A picture of the modern art museum he visited with his grandchildren in Paris in 2018.\nOutput: modern art museum in Paris\n\nInput: A picture of the shared room she and her siblings lived in when she was growing up.\nOutput: cramped room with multiple beds\n\nInput: A photo of the new art supplies Jeremy bought for his upcoming art project with his mentor.\nOutput: new art supplies on a table\n\nInput: A picture of the delicious homemade vegetable smoothie she prepared using fresh produce from her well-organized garden, which she loves to maintain every morning.\n Output: produce garden at home\n\nWrite search queries for the following inputs.\n\n%s\n\nWrite answers in the form of a json list, where each entry is a query."
 
 #最初の発話の際にエージェントに投げるプロンプト
-AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と初めて会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な一言を書いてください。\n\n指示:\n- 相手の発言に自然に応答するか、会話を始める場合は挨拶や近況を尋ねてください\n- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください\n- 返答は短く自然な一文（20語相当以内）で書いてください\n- 同じ話題や情報を繰り返さないでください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な一言を書いてください。\n\n指示:\n- 会話を始める場合は挨拶や近況を尋ねてください\n- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください\n- 返答は短く自然な一文（20語相当以内）で書いてください\n- 同じ話題や情報を繰り返さないでください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
 
 AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """
 あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
@@ -31,7 +31,7 @@ AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """
 
 PERSONALITY: %s
 
-%s は %s と初めて会話します。今日は %s です。%s の人生で以下の出来事が起きました。
+%s は %s と会話します。今日は %s です。%s の人生で以下の出来事が起きました。
 EVENTS: %s
 
 あなたは %s になりきり、%s との会話で次に言う自然な一言を書いてください。%s

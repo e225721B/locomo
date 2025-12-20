@@ -100,8 +100,7 @@ def load_scenario_file(args):
       "events": [
         {
           "turn": 1,
-          "description": "最初の状況説明...",
-          "transition_hint": "(省略可) 前のイベントからの遷移説明"
+          "description": "最初の状況説明..."
         },
         {
           "turn": 20,
@@ -463,7 +462,7 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
     # Optional: conversation topic guidance
     if topic:
         if language == 'ja':
-            query += f"\n\n会話のテーマ: {topic}\nこのテーマに沿って自然に話題を展開してください。無理に繰り返さず、相手の発話に応じた自然な一言で返答してください。"
+            query += f"\n\n会話のテーマ: {topic}\n"
         else:
             query += f"\n\nConversation theme: {topic}\nStick to this theme naturally. Avoid repetition and reply with a single, natural utterance that responds to your partner."
     # If memory snippet is provided (memory stream retrieval), append it
@@ -517,12 +516,20 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
             rr_snip = '\n\nRelationship reflection (7-point -3..+3):\n'
             rr_snip += f"{speaker_1['name']} -> {speaker_2['name']}: " + _fmt2(v12) + '\n'
             if language == 'ja':
-                rr_snip += 'この値を参考に、親密度・力関係、目的指向性を調整してください。数値は -3(低)〜+3(高) です。\n'
+                rr_snip += '数値は -3(低)〜+3(高) で、Intimacy（親密度）：相手に対して感じる近しさ・好意の度合い。高いほど親しい ・Power（力関係）：対話主体が相手に対して主観的に認知している社会的・個人的な力関係を指す ・TaskOriented: タスク指向対話（やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的）であることを表しています。この値を参考に、発話スタイルを調整してください。\n'
             else:
                 rr_snip += 'Use this to adjust intimacy, power, and task orientation (-3 low .. +3 high).\n'
             query += rr_snip
         except Exception:
             pass
+    
+    # 直前の発話をプロンプトに含める
+    if last_dialog:
+        if language == 'ja':
+            query += f"\n\n相手の直前の発話:\n{last_dialog}\n\nこれに対して自然に返答してください。"
+        else:
+            query += f"\n\nPartner's last utterance:\n{last_dialog}\n\nRespond naturally to this."
+    
     return query
 
 
@@ -565,8 +572,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             'turn': 0,
             'event_idx': 0,
             'type': current_event.get('type', 'initial'),
-            'description': current_event.get('description', ''),
-            'transition_hint': current_event.get('transition_hint', '')
+            'description': current_event.get('description', '')
         })
         logging.info(f"========== [EVENT INJECTED] Turn 0 ==========")
         logging.info(f"  Type: {current_event.get('type', 'initial')}")
@@ -672,7 +678,6 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     current_event_idx += 1
                     current_event = next_event
                     new_topic = current_event.get('description', '')
-                    transition_hint = current_event.get('transition_hint', '')
                     event_type = current_event.get('type', 'event')
                     
                     # イベント切り替え履歴を記録
@@ -680,22 +685,16 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                         'turn': i,
                         'event_idx': current_event_idx,
                         'type': event_type,
-                        'description': new_topic,
-                        'transition_hint': transition_hint
+                        'description': new_topic
                     })
                     
-                    # トピックを更新（遷移ヒントがあれば組み合わせる）
-                    if transition_hint:
-                        session_topic = f"{transition_hint}\n\n{new_topic}"
-                    else:
-                        session_topic = new_topic
+                    # トピックを更新
+                    session_topic = new_topic
                     
                     # 詳細なイベント注入ログ
                     logging.info(f"========== [EVENT INJECTED] Turn {i} ==========")
                     logging.info(f"  Event Index: {current_event_idx}")
                     logging.info(f"  Type: {event_type}")
-                    if transition_hint:
-                        logging.info(f"  Transition: {transition_hint}")
                     logging.info(f"  Description: {new_topic}")
                     logging.info(f"==============================================")
                     
@@ -799,7 +798,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 画像関連機能無効化 (placeholder)
         # if args.image_search ...
 
-        # 発話生成用の完全なプロンプトを構築
+        # 発話生成用の完全なプロンプトを構築 
         full_prompt = agent_query + conv_so_far
         
         # トークン上限を拡大（Gemini 2.5 thinking対応で1000トークンに増加）
@@ -824,8 +823,9 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         output["dia_id"] = f'D{curr_sess_id}:{i+1}'
         # 各ターンのリトリーブ結果（テキスト配列）を保存（エクスポート用）
         output["retrieved"] = retrieved_texts_for_turn or []
-        # 発話生成に使用したプロンプトを記録
-        output["generation_prompt"] = full_prompt
+        # 発話生成に使用したプロンプトを記録（agent_queryのみ、会話履歴全体は含めない）
+        # agent_query には last_dialog として直前の発話が含まれている
+        output["generation_prompt"] = agent_query
         # 現在のイベント情報を記録
         if current_event:
             output["current_event"] = {
