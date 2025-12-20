@@ -43,22 +43,23 @@ $$ Score = \alpha \cdot Relevance + \beta \cdot Importance + \gamma \cdot Recenc
 
 ### 関係値ベクトル (7 段階評価: -3 〜 +3)
 
-以下の 2 指標に更新されました（旧: Politeness / Self-Disclosure / Tuning, Attentiveness / Positivity / Coordination は内部でマッピングされます）。
+以下の 3 指標で関係性を評価します:
 
-- **Intimacy (親密度)**: 相手との心理的距離の近さ、親しみの度合い。
-- **Power (力関係)**: 相手に対する優位性・支配性の度合い。
+- **Power (力関係)**: 相手に対する優位性・支配性の度合い。高いほど話者が優位。
+- **Intimacy (親密度)**: 相手との心理的距離の近さ、親しみの度合い。高いほど親密。
+- **TaskOriented (タスク指向)**: 会話がどれだけ目的達成志向か。高いほどタスク集中、低いほど雑談・社交的。
 
 ### 生成プロセス (Post-turn Reflection)
 
 発話が完了し、話者が交代するタイミングで以下の処理が行われます。
 
 1. **高次質問 (HLQ) の生成**:
-   - 直近のやり取りから「この関係性を理解するために問うべき質問は何か？」を LLM に生成させます（例:「A は B の発言にどう反応したか？」）。
+   - 直近のやり取りから「3 つの関係性次元それぞれを評価するための質問」を LLM に生成させます。
 2. **証拠 (Evidence) の収集**:
-   - HLQ に基づいて、Memory Stream から関連する記憶（会話ログや過去の内省）を想起（Retrieve）します。
+   - 各 HLQ に基づいて、Memory Stream から**次元ごとに個別の**関連記憶（会話ログや過去の内省）を想起（Retrieve）します。
 3. **LLM による評価**:
-   - **入力**: ペルソナ、HLQ、収集された証拠（Evidence）。
-   - **出力**: JSON 形式のスコア（例: `{"Intimacy": 2, "Power": -1}`）。
+   - **入力**: ペルソナ、次元ごとの HLQ と証拠（Evidence）。
+   - **出力**: JSON 形式のスコア（例: `{"Power": 1, "Intimacy": 2, "TaskOriented": 0}`）。
 4. **状態の更新**:
    - 計算されたベクトルは `current_relationship_reflection` として保持され、**次のターンの発話生成プロンプト**に「相手への態度指示」として注入されます。
 
@@ -66,6 +67,7 @@ $$ Score = \alpha \cdot Relevance + \beta \cdot Importance + \gamma \cdot Recenc
 
 - **一方向性**: 常に「これから話す人 → 相手」のベクトルのみを計算・利用します。
 - **セッション間の継承**: セッション終了時の最終値は保存され、次のセッションの初期値として引き継がれます。
+- **次元別エビデンス**: 各次元（Power, Intimacy, TaskOriented）ごとに異なる証拠を選定し、より適切な評価を実現します。
 
 ---
 
@@ -84,8 +86,9 @@ $$ Score = \alpha \cdot Relevance + \beta \cdot Importance + \gamma \cdot Recenc
 
 [Relationship Reflection]
 現在の {Agent_B} への態度:
-- Intimacy: +2 (親密)
 - Power: -1 (やや従属的)
+- Intimacy: +2 (親密)
+- TaskOriented: 0 (中立)
 この値を参考に、口調や反応を調整してください。
 
 [Conversation]

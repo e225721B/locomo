@@ -67,8 +67,8 @@
 
 ```
 Relationship reflection (7-point -3..+3):
-Alice -> Bob: Intimacy=2, Power=1
-この値を参考に、親密度・力関係を調整してください。
+Alice -> Bob: Power=1, Intimacy=2, TaskOriented=0
+この値を参考に、力関係・親密度・タスク指向度を調整してください。
 ```
 
 ---
