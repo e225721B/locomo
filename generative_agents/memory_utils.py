@@ -1,7 +1,7 @@
 import os, json
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from global_methods import run_json_trials, get_openai_embedding
 import numpy as np
 import pickle as pkl
@@ -52,9 +52,10 @@ HL_QUESTIONS_PROMPT_EN = (
     "Return ONLY a JSON array of exactly three strings. No extra text.\n\nRECENT MEMORIES:\n{mems}\n"
 )
 
+# 高レベル質問生成用プロンプト（日本語版）
 HL_QUESTIONS_PROMPT_JA = (
     "次の直近のメモリ（会話・気づきを含む）のみを根拠として、以下の3つの関係性次元を観察するための高レベル質問を1つずつ作成してください:\n"
-    "1. Power（力関係）: どちらがより優位・影響力を持っているか？\n"
+    "1. Power（力関係）: 主体が相手に対して主観的に認知している社会的・個人的な力関係を指す\n"
     "2. Intimacy（親密度）: どれだけ親しく温かい関係か？\n"
     "3. TaskOriented（タスク指向対話）: やり取りがどれだけタスク指向か？（雑談・社交的 vs 目的達成志向）\n\n"
     "各質問は【簡潔に（30文字程度）】、それぞれの次元を評価するのに役立つものにしてください。\n"
@@ -102,7 +103,7 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
     "次のCONVERSATION（当該セッションのみ）から、{src} が {dst} に対して感じている関係性を4つの指標で評価してください。\n"
     "各値は 1（非常に低い）〜10（非常に高い）の整数。\n"
     "- intimacy: 親密度（{src} が {dst} に感じる近しさ/好意）\n"
-    "- power: 力関係（{src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる）\n"
+    "- power: 力関係（{src} が {dst} に対して主観的に認知している社会的・個人的な力関係を指す）\n"
     "- social_distance: 社会的距離（形式ばった距離感。高いほど距離がある）\n"
     "- trust: 信頼（{src} が {dst} をどれだけ信頼しているか）\n\n"
     "出力は次のキーを持つJSONオブジェクトのみ（英語キー名を厳守）: \n"
@@ -111,36 +112,12 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
     "CONVERSATION（1行目は日付を含む）:\n{conv}\n"
 )
 
-# --- Relationship Reflection (7-point: -3..+3) prompts ---
-RELN_REFLECT_PROMPT_EN = (
-    "You are rating a 7-point relationship reflection FROM {src} TO {dst} using ONLY the numbered EVIDENCE below (and the high-level questions used as retrieval intent).\n"
-    "Rate exactly three dimensions as integers in the closed range -3..+3 (7-point scale):\n"
-    "- Power: perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful/dominant.\n"
-    "- Intimacy: degree of closeness/affection {src} feels toward {dst}. Higher means closer.\n"
-    "- TaskOriented: how task-oriented the dialogue is. Higher means more task-focused, lower means more social/casual chat.\n\n"
-    "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
-    "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Power\":-1,\"Intimacy\":2,\"TaskOriented\":1}}. No extra text.\n\n"
-    "HIGH-LEVEL QUESTIONS:\n{hlq}\n\nEVIDENCE (numbered):\n{evid}\n"
-)
-
-#関係値を生成させるプロンプト
-RELN_REFLECT_PROMPT_JA = (
-    "以下の高レベル質問と番号付き根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n"
-    "評価する指標は3つです:\n"
-    "- Power: 力関係（{src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる）\n"
-    "- Intimacy: 親密度（{src} が {dst} に対して感じる近しさ・好意の度合い。高いほど親しい）\n"
-    "- TaskOriented: タスク指向対話（やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的）\n\n"
-    "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
-    "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"TaskOriented\":-3..+3}}。JSON 以外の文章は書かないでください。\n\n"
-    "高レベル質問:\n{hlq}\n\n根拠（番号付き）:\n{evid}\n"
-)
-
-# 各次元ごとに個別の質問とエビデンスを渡す新プロンプト（日本語）
+# 各次元ごとに個別の質問とエビデンスを渡すプロンプト（日本語）
 RELN_REFLECT_PROMPT_SPLIT_JA = (
     "以下の3つの関係性次元について、それぞれに対応する質問と根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n\n"
     "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
     "【Power（力関係）】\n"
-    "評価基準: {src} が {dst} に対して自分がより優位/影響力があると感じる度合い。高いほど {src} が優位と感じる。\n"
+    "評価基準: {src} が {dst} に対して主観的に認知している社会的・個人的な力関係を指す。\n"
     "質問: {q_power}\n"
     "根拠:\n{evid_power}\n\n"
     "【Intimacy（親密度）】\n"
@@ -154,7 +131,7 @@ RELN_REFLECT_PROMPT_SPLIT_JA = (
     "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"TaskOriented\":-3..+3}}。JSON 以外の文章は書かないでください。\n"
 )
 
-# 各次元ごとに個別の質問とエビデンスを渡す新プロンプト（英語）
+# 各次元ごとに個別の質問とエビデンスを渡すプロンプト（英語）
 RELN_REFLECT_PROMPT_SPLIT_EN = (
     "Rate a 7-point relationship reflection FROM {src} TO {dst} using the dimension-specific questions and evidence below.\n\n"
     "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
@@ -780,13 +757,20 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             _from(agent_a); _from(agent_b)
         
         # session_dialog が渡されていれば、それも entries に追加
+        # インデックス付きのタイムスタンプを生成して、最新の発話が優先されるようにする
         if session_dialog and isinstance(session_dialog, list):
-            sess_date = agent_a.get(f'session_{session_idx}_date_time') or datetime.utcnow().strftime('%d %B, %Y')
-            for d in session_dialog:
+            sess_date_str = agent_a.get(f'session_{session_idx}_date_time') or datetime.utcnow().strftime('%d %B, %Y')
+            try:
+                base_dt = datetime.strptime(sess_date_str, '%d %B, %Y')
+            except Exception:
+                base_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            for idx, d in enumerate(session_dialog):
                 if isinstance(d, dict):
+                    # 各発話に秒単位のオフセットを付与（後の発話ほど新しい）
+                    offset_dt = base_dt + timedelta(seconds=idx)
                     entries.append({
                         'text': d.get('clean_text') or d.get('text',''),
-                        'created_at': sess_date,
+                        'created_at': offset_dt.isoformat(),
                         'importance': 5,
                         'embedding': [],
                         'source': 'conversation',
@@ -796,11 +780,16 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
         if not entries:
             primary = agent_a if target != 'b' else agent_b
             sess = primary.get(f'session_{session_idx}') or []
-            sess_date = primary.get(f'session_{session_idx}_date_time') or datetime.utcnow().strftime('%d %B, %Y')
-            for d in sess:
+            sess_date_str = primary.get(f'session_{session_idx}_date_time') or datetime.utcnow().strftime('%d %B, %Y')
+            try:
+                base_dt = datetime.strptime(sess_date_str, '%d %B, %Y')
+            except Exception:
+                base_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            for idx, d in enumerate(sess):
+                offset_dt = base_dt + timedelta(seconds=idx)
                 entries.append({
                     'text': d.get('clean_text') or d.get('text',''),
-                    'created_at': sess_date,
+                    'created_at': offset_dt.isoformat(),
                     'importance': 5,
                     'embedding': [],
                     'source': 'conversation',
@@ -1089,6 +1078,36 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             r_ba = {}
         result['b_to_a'] = _ensure_rr_schema(r_ba)
     result['by_speaker'][agent_b['name']] = {'toward': agent_a['name'], 'vector': result['b_to_a']}
+
+    # --- プロンプトと生成結果を別ファイルに出力 ---
+    try:
+        result_trace_path = os.path.join(getattr(args, 'out_dir', '.'), 'relationship_reflection_details.jsonl')
+        if target in ('a', 'both'):
+            detail_ab = {
+                'time': datetime.utcnow().isoformat(),
+                'session_idx': session_idx,
+                'direction': 'a_to_b',
+                'src': agent_a['name'],
+                'dst': agent_b['name'],
+                'prompt': p_ab,
+                'generated_values': result['a_to_b'],
+            }
+            with open(result_trace_path, 'a', encoding='utf-8') as rf:
+                rf.write(json.dumps(detail_ab, ensure_ascii=False) + "\n")
+        if target in ('b', 'both'):
+            detail_ba = {
+                'time': datetime.utcnow().isoformat(),
+                'session_idx': session_idx,
+                'direction': 'b_to_a',
+                'src': agent_b['name'],
+                'dst': agent_a['name'],
+                'prompt': p_ba,
+                'generated_values': result['b_to_a'],
+            }
+            with open(result_trace_path, 'a', encoding='utf-8') as rf:
+                rf.write(json.dumps(detail_ba, ensure_ascii=False) + "\n")
+    except Exception as _e:
+        logging.debug(f"Failed to append relationship_reflection details: {_e}")
 
     if result['a_to_b'] is None:
         result['a_to_b'] = _ensure_rr_schema({})
