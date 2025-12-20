@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 import numpy as np
@@ -111,7 +111,21 @@ class MemoryStore:
 
     def add_memory(self, text: str, created_at: Optional[str], source_type: str,
                    related_memory_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        # 日付のみ（時刻なし）の場合、エントリ数に基づく秒オフセットを付与して順序を保持
         created = created_at or _now_iso()
+        if created and 'T' not in created and ':' not in created:
+            # 日付のみ形式（例: "15 August, 2024"）の場合
+            try:
+                base_dt = datetime.strptime(created, '%d %B, %Y')
+            except ValueError:
+                try:
+                    base_dt = datetime.strptime(created, '%d %B %Y')
+                except ValueError:
+                    base_dt = None
+            if base_dt:
+                # 現在のエントリ数を秒オフセットとして使用
+                offset_dt = base_dt + timedelta(seconds=len(self.entries))
+                created = offset_dt.isoformat()
         entry: Dict[str, Any] = {
             'id': self._next_id(),
             'text': text,
