@@ -1,0 +1,39 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "event_interval": 20,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": true,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 2, "Intimacy": -3, "TaskOriented": 0 },
+    "agent_b_to_a": { "Power": -2, "Intimacy": -3, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "conflict",
+      "description": "アスカ（A）が、自分のプライベートな領域（部屋や過去）にシンジ（B）が不用意に踏み込んだと誤解し、激昂している。アスカはシンジを「生理的に無理」「他人のふりをして」と徹底的に拒絶してしまった。"
+    },
+    {
+      "turn": 20,
+      "type": "external_threat",
+      "description": "突如、基地全体が停電し、二人は狭いエレベーターの中に閉じ込められてしまった。互いに協力しないと脱出できない状況になる。"
+    },
+    {
+      "turn": 40,
+      "type": "emotional_connection",
+      "description": "何とか協力してエレベーターから脱出することに成功する。"
+    }
+  ]
+}

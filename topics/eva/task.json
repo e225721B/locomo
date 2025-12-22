@@ -1,0 +1,35 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "event_interval": 20,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": true,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "emotional_chaos",
+      "description": "シンクロテストの準備中だが、アスカ（A）とシンジ（B）は昨晩のテレビ番組のチャンネル争いや、お互いの性格の不一致について感情的に喚き合っている。話題は二転三転し、本来やるべきテストの手順は完全に無視されている状態（TaskOriented: -3）。"
+    },
+    {
+      "turn": 20,
+      "type": "routine_work",
+      "description": "ミサトから叱責され、二人は渋々ながら業務に戻る。私語をやめ、マニュアル通りにエントリープラグの挿入、神経接続の確認作業を行う。感情はまだ燻っているが、最低限の「やるべきこと（タスク）」についての会話が成立している（TaskOriented: 0）。"
+    },
+    {
+      "turn": 40,
+      "type": "mission_execution",
+      "description": "使徒が襲来し、戦闘態勢に突入。二人の意識は完全に切り替わる。「座標205」「了解」「展開」といった、作戦遂行に必要な情報のみが短く的確に交換される。そこには感情も私語も一切なく、目的達成のためだけに最適化されたプロフェッショナルな対話のみが存在する（TaskOriented: +3）。"
+    }
+  ]
+}

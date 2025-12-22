@@ -184,6 +184,12 @@ def load_scenario_file(args):
             for idx, v in enumerate(topics_data, start=1):
                 session_topics[idx] = v
     
+    # initial_relationship フィールドがあれば args に保存
+    initial_relationship = scenario.get('initial_relationship')
+    if initial_relationship:
+        args.initial_relationship = initial_relationship
+        logging.info(f"Initial relationship loaded: {initial_relationship}")
+    
     logging.info(f"Loaded scenario: mode={mode}, events={len(events)}, settings={list(settings.keys())}")
     return args, events, session_topics
 
@@ -622,7 +628,26 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             prev_rr = agent_a.get(f'session_{curr_sess_id-1}_relationship_reflection')
     except Exception:
         prev_rr = None
-    current_relationship_reflection = prev_rr if isinstance(prev_rr, dict) else _zero_rr()
+    
+    # initial_relationship がシナリオファイルで指定されている場合は初期値として使用
+    initial_rel = getattr(args, 'initial_relationship', None)
+    if prev_rr and isinstance(prev_rr, dict):
+        current_relationship_reflection = prev_rr
+    elif initial_rel and isinstance(initial_rel, dict):
+        # シナリオファイルからの初期値を適用
+        a_to_b = initial_rel.get('agent_a_to_b', {'Intimacy': 0, 'Power': 0, 'TaskOriented': 0})
+        b_to_a = initial_rel.get('agent_b_to_a', {'Intimacy': 0, 'Power': 0, 'TaskOriented': 0})
+        current_relationship_reflection = {
+            'a_to_b': a_to_b,
+            'b_to_a': b_to_a,
+            'by_speaker': {
+                agent_a['name']: {'toward': agent_b['name'], 'vector': a_to_b},
+                agent_b['name']: {'toward': agent_a['name'], 'vector': b_to_a}
+            }
+        }
+        logging.info(f"[relationship] Initial relationship values applied: a_to_b={a_to_b}, b_to_a={b_to_a}")
+    else:
+        current_relationship_reflection = _zero_rr()
     # memory stores (loaded once per session)
     mem_a = MemoryStore(agent_a, lang=args.lang) if args.memory_stream else None
     mem_b = MemoryStore(agent_b, lang=args.lang) if args.memory_stream else None

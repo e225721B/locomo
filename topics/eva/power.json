@@ -1,0 +1,35 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "event_interval": 20,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": true,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "domination",
+      "description": "アスカ（A）がシンジ（B）を完全に下僕扱いしている。掃除、洗濯、飲み物の調達まで全てアスカが命令し、シンジは「すみません」と謝りながら言われるがままに従っている。シンジに決定権は全くない（Power: -3）。"
+    },
+    {
+      "turn": 20,
+      "type": "negotiation",
+      "description": "次の作戦会議中。いつものようにアスカが独断で決めようとするが、シンジが「その方法はリスクが高い」と論理的に反論する。アスカもシンジの意見に一理あると認めざるを得なくなり、二人は対等な立場で意見を戦わせ、合意形成を図ろうとする（Power: 0）。"
+    },
+    {
+      "turn": 40,
+      "type": "leadership_reversal",
+      "description": "実戦にて想定外の事態が発生し、アスカがパニックに陥り動けなくなる。その時、シンジが強い口調で「アスカ！ 僕の指示に従え！」と一喝する。アスカはその迫力と的確な判断に圧倒され、シンジの命令に素直に従い、主導権が完全にシンジへと移る（Power: +3）。"
+    }
+  ]
+}
