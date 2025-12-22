@@ -887,27 +887,24 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     # --- 各次元ごとに個別にスコアリングしてエビデンスを選定 ---
     # hlq[0]=Power用, hlq[1]=Intimacy用, hlq[2]=TaskOriented用 と仮定
     q_embs = _embed_list(hlq)  # 3つの質問のembedding
-    now_dt = datetime.utcnow()
+    # 各メモリに対して基本スコア（importance, order）を計算
+    # 最大ターンインデックスを取得
+    max_turn = max((e.get('turn_index', i) for i, e in enumerate(recent)), default=0)
     
-    # 各メモリに対して基本スコア（importance, recency）を計算
     base_scores = []
-    for e in recent:
+    for i, e in enumerate(recent):
         importance = float(e.get('importance', 5))
-        created = e.get('created_at') or now_dt.isoformat()
-        try:
-            cdt = datetime.fromisoformat(created)
-        except Exception:
-            cdt = now_dt
-        hours = max(0.0, (now_dt - cdt).total_seconds() / 3600.0)
-        recency = float(np.power(0.995, hours))
-        base_scores.append({'entry': e, 'importance': importance, 'recency': recency})
+        # ターン順序スコア: 新しいターンほど高い
+        turn_idx = e.get('turn_index', i)  # turn_indexがない場合はインデックスを使用
+        order_score = float(np.power(0.95, max_turn - turn_idx))
+        base_scores.append({'entry': e, 'importance': importance, 'order': order_score})
     
     def _score_for_question(q_emb, char_budget=700, max_items=5):
         """特定の質問に対してスコアリングし、上位エビデンスを返す"""
         scored = []
         relevances = []
         importances = []
-        recencies = []
+        orders = []
         for bs in base_scores:
             e = bs['entry']
             emb_val = _safe_get_embedding(e, 'embedding', [])
@@ -915,18 +912,18 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             sim = _cos(emb_floats, q_emb) if emb_floats and q_emb else 0.0
             relevances.append(sim)
             importances.append(bs['importance'])
-            recencies.append(bs['recency'])
+            orders.append(bs['order'])
             scored.append(e)
         
         # 正規化
         rel_n = _minmax(relevances)
         imp_n = _minmax(importances)
-        rec_n = _minmax(recencies)
+        ord_n = _minmax(orders)
         
-        # 合成スコアでソート
+        # 合成スコアでソート（重み: 類似度0.5, 重要度0.2, 順序0.3）
         ranked = []
         for i, e in enumerate(scored):
-            combined = rel_n[i] + imp_n[i] + rec_n[i]
+            combined = 0.5 * rel_n[i] + 0.2 * imp_n[i] + 0.3 * ord_n[i]
             ranked.append((combined, e))
         ranked.sort(key=lambda x: x[0], reverse=True)
         

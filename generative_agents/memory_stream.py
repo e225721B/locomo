@@ -111,21 +111,9 @@ class MemoryStore:
 
     def add_memory(self, text: str, created_at: Optional[str], source_type: str,
                    related_memory_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-        # 日付のみ（時刻なし）の場合、エントリ数に基づく秒オフセットを付与して順序を保持
+        # ターンインデックスを付与（順序スコア計算用）
+        turn_index = len(self.entries)
         created = created_at or _now_iso()
-        if created and 'T' not in created and ':' not in created:
-            # 日付のみ形式（例: "15 August, 2024"）の場合
-            try:
-                base_dt = datetime.strptime(created, '%d %B, %Y')
-            except ValueError:
-                try:
-                    base_dt = datetime.strptime(created, '%d %B %Y')
-                except ValueError:
-                    base_dt = None
-            if base_dt:
-                # 現在のエントリ数を秒オフセットとして使用
-                offset_dt = base_dt + timedelta(seconds=len(self.entries))
-                created = offset_dt.isoformat()
         entry: Dict[str, Any] = {
             'id': self._next_id(),
             'text': text,
@@ -137,6 +125,7 @@ class MemoryStore:
             'embedding': self._embed(text),
             'retrieval_score': 0.0,
             'related_memory_ids': list(related_memory_ids or []),
+            'turn_index': turn_index,  # ターン順序スコア用
         }
         self.entries.append(entry)
         return entry
@@ -188,9 +177,9 @@ class MemoryStore:
             return 0.0
         return float(np.dot(va, vb) / (na * nb))
     def retrieve(self, query_text: str, topk: int = 5, now_date: Optional[str] = None,
-                 w_sim: float = 0.6, w_imp: float = 0.25, w_rec: float = 0.15) -> List[Dict[str, Any]]:
+                 w_sim: float = 0.5, w_imp: float = 0.2, w_order: float = 0.3) -> List[Dict[str, Any]]:
         """
-        メモリストリームから上位 Top-K 件を取得します（類似度・重要度・再近性の合成スコア）。
+        メモリストリームから上位 Top-K 件を取得します（類似度・重要度・ターン順序の合成スコア）。
         Args:
             query_text (str):
                 クエリとなるテキスト（例: 直前の相手の発話やペルソナ文）。
@@ -200,28 +189,26 @@ class MemoryStore:
                 返却するメモリエントリの件数（最低1）。
                 
             now_date (Optional[str]):
-                「現在時刻」として扱う日時の文字列。日付/ISO 形式のいずれかを想定。
-                例: "%d %B, %Y", "%d %B %Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"。
-                指定がない場合は UTC 現在時刻を用います。
+                未使用（後方互換性のため残存）。
                 
-            w_sim (float, default=0.6):
+            w_sim (float, default=0.5):
                 類似度（クエリ埋め込みとメモリ埋め込みのコサイン類似度）の重み。
                 値を上げると意味的な近さをより重視します。
                 
-            w_imp (float, default=0.25):
+            w_imp (float, default=0.2):
                 重要度（1〜10 を 0.1〜1.0 に正規化）の重み。
                 値を上げると「重要度の高い記憶」を優先します。
                 
-            w_rec (float, default=0.15):
-                再近性（新しさ）の重み。再近性は recency = 0.995 ** hours で計算します（hours は経過時間[時間]）。
-                値を下げると時間距離の影響が弱まり、古い記憶も残りやすくなります。
+            w_order (float, default=0.3):
+                ターン順序の重み。新しいターンほど高いスコア（0.95 ** (max_turn - turn_index)）。
+                発話順序を反映するために使用します。
 
         Returns:
             List[Dict[str, Any]]: スコア順に上位 Top-K のメモリエントリ辞書を返します。
 
         備考:
-            - 時間距離の影響をさらに弱めたい場合は、w_rec を小さくするほか、recency 計算式の底（0.995）や
-              時間スケール（hours を hours/24.0 など）を調整する方法もあります。
+            - タイムスタンプベースの recency は秒単位では感度が低いため廃止
+            - ターン順序スコアで発話の新しさを反映
         """
         if not self.entries or not query_text:
             return []
@@ -229,19 +216,21 @@ class MemoryStore:
             q = list(map(float, get_embedding([query_text])[0]))
         except Exception:
             q = []
-        now = _parse_date(now_date) if now_date else datetime.utcnow()
+        
+        # 最大ターンインデックスを取得（順序スコア計算用）
+        max_turn = max((e.get('turn_index', 0) for e in self.entries), default=0)
+        
         scored: List[tuple] = []
         for e in self.entries:
             emb_val = _safe_get_embedding(e, 'embedding', [])
             sim = self._cosine(q, emb_val)
             imp = (float(e.get('importance', 5)) / 10.0)
-            created = _parse_date(e.get('created_at'))
-            hours = max(0.0, (now - created).total_seconds() / 3600.0)
-            #Recency 新しさ
-            recency = float(np.power(0.995, hours))
-            score = w_sim * sim + w_imp * imp + w_rec * recency
-            e['last_accessed_at'] = now.isoformat()
-            e['recency_weight'] = recency
+            # ターン順序スコア: 新しいターンほど高い（0.95^差分）
+            turn_idx = e.get('turn_index', 0)
+            order_score = float(np.power(0.95, max_turn - turn_idx))
+            # 合成スコア
+            score = w_sim * sim + w_imp * imp + w_order * order_score
+            e['order_score'] = order_score
             e['retrieval_score'] = score
             scored.append((score, e))
         scored.sort(key=lambda x: x[0], reverse=True)
