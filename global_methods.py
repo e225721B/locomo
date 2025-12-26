@@ -3,6 +3,10 @@ import json
 import time
 import sys
 import os
+import warnings
+
+# Suppress FutureWarning from google.generativeai
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
 
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -299,10 +303,10 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
         wait_time (int): バックオフ初期値 (秒)
 
     Returns:
-        str | List[str]: num_gen=1 なら文字列、>1 なら文字列リスト
+        str | List[str]: num_gen=1 なら文字列、>1 なら文字列リストgemini-2.5-flash
     """
-    # モデル名 (gemini-2.0-flash: より安定した動作のため)
-    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.0-flash")
+    # モデル名 (gemini-3-flash-preview: 高性能モデルを優先)
+    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
     
     def _normalize_gemini_model_name(name: str) -> str:
         # SDK により "models/" プレフィックスの有無が異なるため吸収
@@ -323,9 +327,8 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
     fallbacks = [
         _normalize_gemini_model_name(_LAST_GOOD_GEMINI_MODEL) if _LAST_GOOD_GEMINI_MODEL else None,
         primary,
-        _normalize_gemini_model_name("gemini-2.0-flash"),
-        _normalize_gemini_model_name("gemini-2.0-flash-lite"),
-        _normalize_gemini_model_name("gemini-1.5-pro"),
+        _normalize_gemini_model_name("gemini-3-flash-preview"),
+
     ]
     # None を除去しつつ順序を保持したユニーク化
     seen = set()

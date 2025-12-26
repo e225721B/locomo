@@ -79,7 +79,7 @@ class MemoryStore:
         prompt = (IMPORTANCE_PROMPT_JA if self.lang == 'ja' else IMPORTANCE_PROMPT_EN).format(mem=text)
         try:
             # トークン数を増やし、リトライ回数を減らして高速化
-            obj = run_json_trials(prompt, model='chatgpt', num_tokens_request=150, max_retries=3)
+            obj = run_json_trials(prompt, model='chatgpt', num_tokens_request=1000, max_retries=3)
             if isinstance(obj, dict):
                 for k, v in obj.items():
                     kk = str(k).strip().strip('"').strip("'").lower()

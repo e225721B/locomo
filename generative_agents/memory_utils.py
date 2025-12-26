@@ -112,10 +112,9 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
     "CONVERSATION（1行目は日付を含む）:\n{conv}\n"
 )
 
-# 各次元ごとに個別の質問とエビデンスを渡すプロンプト（日本語）
+# 各次元ごとに個別の質問とエビデンスを渡し、関係値を生成させるプロンプト（日本語）
 RELN_REFLECT_PROMPT_SPLIT_JA = (
     "以下の3つの関係性次元について、それぞれに対応する質問と根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n\n"
-    "キャラクターのペルソナ:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
     "【Power（力関係）】\n"
     "評価基準: {src} が {dst} に対して主観的に認知している社会的・個人的な力関係を指す。\n"
     "質問: {q_power}\n"
@@ -853,8 +852,8 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             return [0.5 for _ in xs]
         return [(x-mn)/(mx-mn) for x in xs]
 
-    # エビデンス候補数: 引数 > args設定 > デフォルト10
-    _evidence_limit = evidence_topk or getattr(args, 'reflection_evidence_topk', 10)
+    # エビデンス候補数: 引数 > args設定 > デフォルト30
+    _evidence_limit = evidence_topk or getattr(args, 'reflection_evidence_topk', 30)
     recent = _collect(limit=_evidence_limit)
     recent_texts = [e.get('text','') for e in recent]
     # HLQ generation (Gemini 2.5 thinking対応で3000トークンに増加)

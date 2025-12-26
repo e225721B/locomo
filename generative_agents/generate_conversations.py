@@ -1363,6 +1363,17 @@ def main():
         except (TypeError, ValueError):
             args_dict[key] = str(args_dict[key])
     
+    # 使用したGeminiモデル名を追加
+    gemini_model_used = os.environ.get("GEMINI_MODEL_NAME", "gemini-3-flash-preview")
+    # global_methods から実際に使用されたモデルを取得（可能なら）
+    try:
+        from global_methods import _LAST_GOOD_GEMINI_MODEL
+        if _LAST_GOOD_GEMINI_MODEL:
+            gemini_model_used = _LAST_GOOD_GEMINI_MODEL
+    except ImportError:
+        pass
+    args_dict['gemini_model'] = gemini_model_used
+    
     export_payload = {
         'command_args': args_dict,
         'agent_a': agent_a['name'],
@@ -1561,6 +1572,34 @@ def main():
     with open(mem_export_b_path, 'w') as f:
         json.dump(mem_export_b, f, ensure_ascii=False, indent=2)
     logging.info(f"Exported per-agent memory streams to {mem_export_a_path} and {mem_export_b_path}")
+
+    # 自動グラフ生成（関係値推移）
+    try:
+        import sys
+        import importlib.util
+        # scripts ディレクトリのパスを構築
+        scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts')
+        plot_module_path = os.path.join(scripts_dir, 'plot_single_experiment.py')
+        
+        if os.path.exists(plot_module_path):
+            # 動的にモジュールをロード
+            spec = importlib.util.spec_from_file_location("plot_single_experiment", plot_module_path)
+            plot_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(plot_module)
+            
+            logging.info(f"Generating relationship graphs in {args.out_dir}/graphs/...")
+            generated = plot_module.generate_all_graphs(args.out_dir, show=False)
+            if generated:
+                logging.info(f"Generated {len(generated)} graph files:")
+                for gpath in generated:
+                    logging.info(f"  - {gpath}")
+        else:
+            logging.warning(f"Plot script not found: {plot_module_path}")
+    except ImportError as e:
+        logging.warning(f"Could not import plot_single_experiment: {e}")
+        logging.warning("Skipping automatic graph generation. Run manually with: python scripts/plot_single_experiment.py --dir <out_dir>")
+    except Exception as e:
+        logging.warning(f"Failed to generate graphs: {e}")
 
 
 if __name__ == "__main__":
