@@ -55,9 +55,19 @@ HL_QUESTIONS_PROMPT_EN = (
 # 高レベル質問生成用プロンプト（日本語版）
 HL_QUESTIONS_PROMPT_JA = (
     "次の直近のメモリ（会話・気づきを含む）のみを根拠として、以下の3つの関係性次元を観察するための高レベル質問を1つずつ作成してください:\n"
-    "1. Power（力関係）: 主体が相手に対して主観的に認知している社会的・個人的な力関係を指す\n"
-    "2. Intimacy（親密度）: どれだけ親しく温かい関係か？\n"
-    "3. TaskOriented（タスク指向対話）: やり取りがどれだけタスク指向か？（雑談・社交的 vs 目的達成志向）\n\n"
+    "【重要な観点】\n"
+    "- 相手がどのような人物か（素直に表現するタイプか、照れ隠しで逆のことを言うタイプか等）を考慮する\n"
+    "- 表面的な言葉遣いだけでなく、行動や態度の変化に注目する\n"
+    "- 前回からの関係性の変化を検出できる質問にする\n\n"
+    
+    "【3つの次元】\n"
+    "1. Power（力関係）: 自分が相手に対してどれだけ影響力を持っていると感じるか\n"
+    "   質問例: 相手への指示や命令はありましたか？ / どちらが主導権を握っていますか？\n"
+    "2. Intimacy（親密度）: 相手との心理的な距離感・関わりの深さ\n"
+    "   質問例: 相手は自分に関心を持っていますか？ / 以前より態度が軟化していますか？\n"
+    "3. TaskOriented（タスク指向）: 目的達成志向か、関係構築志向か\n"
+    "   質問例: 具体的な問題解決が話題の中心ですか？\n\n"
+    
     "各質問は【簡潔に（30文字程度）】、それぞれの次元を評価するのに役立つものにしてください。\n"
     "出力は JSON 配列（要素は文字列）『のみ』で、ちょうど3件返してください。余計な文章は書かないでください。\n\n直近メモリ:\n{mems}\n"
 )
@@ -115,6 +125,13 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
 # 各次元ごとに個別の質問とエビデンスを渡し、関係値を生成させるプロンプト（日本語）
 RELN_REFLECT_PROMPT_SPLIT_JA = (
     "以下の3つの関係性次元について、それぞれに対応する質問と根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n\n"
+    "【重要な観点】\n"
+    "- 相手がどのような人物か（素直に表現するタイプか、照れ隠しで逆のことを言うタイプか等）を考慮する\n"
+    "- 表面的な言葉遣いだけでなく、行動や態度の変化に注目する\n"
+    "- 前回からの関係性の変化を検出できる質問にする\n\n"
+
+    "【前回の関係値】\n"
+    "{prev_relationship_block}\n\n"
     "【Power（力関係）】\n"
     "評価基準: {src} が {dst} に対して主観的に認知している社会的・個人的な力関係を指す。\n"
     "質問: {q_power}\n"
@@ -127,13 +144,15 @@ RELN_REFLECT_PROMPT_SPLIT_JA = (
     "評価基準: やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的。\n"
     "質問: {q_task}\n"
     "根拠:\n{evid_task}\n\n"
+    "前回の関係値を参考にしつつ、今回の根拠に基づいて新たな関係値を判断してください。\n"
     "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"TaskOriented\":-3..+3}}。JSON 以外の文章は書かないでください。\n"
 )
 
 # 各次元ごとに個別の質問とエビデンスを渡すプロンプト（英語）
 RELN_REFLECT_PROMPT_SPLIT_EN = (
     "Rate a 7-point relationship reflection FROM {src} TO {dst} using the dimension-specific questions and evidence below.\n\n"
-    "PERSONAS:\n- {src}: {src_persona}\n- {dst}: {dst_persona}\n\n"
+    "【Previous Relationship Values】\n"
+    "{prev_relationship_block}\n\n"
     "【Power】\n"
     "Criterion: Perceived dominance/influence {src} feels they have over {dst}. Higher means {src} feels more powerful.\n"
     "Question: {q_power}\n"
@@ -146,6 +165,7 @@ RELN_REFLECT_PROMPT_SPLIT_EN = (
     "Criterion: How task-oriented the dialogue is. Higher means more task-focused, lower means more social/casual.\n"
     "Question: {q_task}\n"
     "Evidence:\n{evid_task}\n\n"
+    "Consider the previous relationship values as a reference, then determine new values based on the current evidence.\n"
     "Return ONLY a JSON object with exactly these keys and integer values in [-3,3], e.g. {{\"Power\":-1,\"Intimacy\":2,\"TaskOriented\":1}}. No extra text.\n"
 )
 
@@ -705,7 +725,7 @@ def _ensure_rr_schema(obj: dict) -> dict:
         'TaskOriented': _rr_coerce(obj.get('TaskOriented', 0)),
     }
 
-def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str = 'both', session_dialog=None, min_turns_required: int = 3, evidence_topk: int = None):
+def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str = 'both', session_dialog=None, min_turns_required: int = 3, evidence_topk: int = None, prev_relationship: dict = None, turn_idx: int = None):
     """Compute 7-point (-3..+3) relationship reflection vector using HLQ + evidence pipeline.
     Returns dict:
       {
@@ -717,6 +737,8 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     session_dialog: optional list of dialog entries to use instead of/in addition to memory stream
     min_turns_required: minimum number of conversation turns required to compute; returns zeros if fewer
     evidence_topk: number of recent memory entries to use as evidence candidates (default: args.reflection_evidence_topk or 10)
+    prev_relationship: optional dict with previous relationship values {'a_to_b': {...}, 'b_to_a': {...}}
+    turn_idx: optional turn index for logging purposes
     """
     lang = getattr(args, 'lang', 'en')
     
@@ -959,6 +981,34 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     hlq_block = '\n- ' + '\n- '.join(hlq)
     evid_block = '\n'.join(numbered)
     
+    # 前回の関係値ブロックを構築
+    def _format_prev_rel(prev_rel: dict, direction: str, lang: str) -> str:
+        """前回の関係値を文字列として整形する"""
+        if not prev_rel or not isinstance(prev_rel, dict):
+            if lang == 'ja':
+                return "（初回のため前回値なし）"
+            else:
+                return "(No previous values - first evaluation)"
+        
+        rel_vec = prev_rel.get(direction, {})
+        if not rel_vec:
+            if lang == 'ja':
+                return "（初回のため前回値なし）"
+            else:
+                return "(No previous values - first evaluation)"
+        
+        power = rel_vec.get('Power', 0)
+        intimacy = rel_vec.get('Intimacy', 0)
+        task = rel_vec.get('TaskOriented', 0)
+        
+        if lang == 'ja':
+            return f"Power: {power}, Intimacy: {intimacy}, TaskOriented: {task}"
+        else:
+            return f"Power: {power}, Intimacy: {intimacy}, TaskOriented: {task}"
+    
+    prev_rel_ab = _format_prev_rel(prev_relationship, 'a_to_b', lang)
+    prev_rel_ba = _format_prev_rel(prev_relationship, 'b_to_a', lang)
+    
     src_p = (agent_a.get('persona_summary') or '').strip()
     dst_p = (agent_b.get('persona_summary') or '').strip()
     
@@ -966,14 +1016,14 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     if lang == 'ja':
         p_ab = RELN_REFLECT_PROMPT_SPLIT_JA.format(
             src=agent_a['name'], dst=agent_b['name'],
-            src_persona=src_p, dst_persona=dst_p,
+            prev_relationship_block=prev_rel_ab,
             q_power=hlq[0], evid_power=evid_power_block,
             q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
             q_task=hlq[2], evid_task=evid_task_block
         )
         p_ba = RELN_REFLECT_PROMPT_SPLIT_JA.format(
             src=agent_b['name'], dst=agent_a['name'],
-            src_persona=dst_p, dst_persona=src_p,
+            prev_relationship_block=prev_rel_ba,
             q_power=hlq[0], evid_power=evid_power_block,
             q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
             q_task=hlq[2], evid_task=evid_task_block
@@ -981,14 +1031,14 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     else:
         p_ab = RELN_REFLECT_PROMPT_SPLIT_EN.format(
             src=agent_a['name'], dst=agent_b['name'],
-            src_persona=src_p, dst_persona=dst_p,
+            prev_relationship_block=prev_rel_ab,
             q_power=hlq[0], evid_power=evid_power_block,
             q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
             q_task=hlq[2], evid_task=evid_task_block
         )
         p_ba = RELN_REFLECT_PROMPT_SPLIT_EN.format(
             src=agent_b['name'], dst=agent_a['name'],
-            src_persona=dst_p, dst_persona=src_p,
+            prev_relationship_block=prev_rel_ba,
             q_power=hlq[0], evid_power=evid_power_block,
             q_intimacy=hlq[1], evid_intimacy=evid_intimacy_block,
             q_task=hlq[2], evid_task=evid_task_block
@@ -1002,6 +1052,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             'time': datetime.utcnow().isoformat(),
             'session_idx': session_idx,
             'language': lang,
+            'prev_relationship': prev_relationship,  # 前回の関係値をトレースに記録
             'hlq_list': hlq,
             'hlq_block': hlq_block.strip(),
             'evidence_numbered': numbered,
@@ -1031,6 +1082,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
                 'dst': agent_b['name'],
                 'src_persona': src_p,
                 'dst_persona': dst_p,
+                'prev_relationship_for_direction': prev_rel_ab,  # この方向の前回値
                 'prompt': p_ab,
             }
             with open(trace_path, 'a', encoding='utf-8') as tf:
@@ -1044,6 +1096,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
                 'dst': agent_a['name'],
                 'src_persona': dst_p,
                 'dst_persona': src_p,
+                'prev_relationship_for_direction': prev_rel_ba,  # この方向の前回値
                 'prompt': p_ba,
             }
             with open(trace_path, 'a', encoding='utf-8') as tf:
@@ -1082,6 +1135,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             detail_ab = {
                 'time': datetime.utcnow().isoformat(),
                 'session_idx': session_idx,
+                'turn': turn_idx,
                 'direction': 'a_to_b',
                 'src': agent_a['name'],
                 'dst': agent_b['name'],
@@ -1094,6 +1148,7 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
             detail_ba = {
                 'time': datetime.utcnow().isoformat(),
                 'session_idx': session_idx,
+                'turn': turn_idx,
                 'direction': 'b_to_a',
                 'src': agent_b['name'],
                 'dst': agent_a['name'],

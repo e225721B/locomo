@@ -726,7 +726,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     # イベント切り替え時に関係値を評価・記録（relationship_reflection が有効な場合）
                     if args.relationship_reflection:
                         try:
-                            rr_at_event = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target='both', session_dialog=session)
+                            rr_at_event = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target='both', session_dialog=session, prev_relationship=current_relationship_reflection, turn_idx=i)
                             event_history[-1]['relationship_reflection'] = rr_at_event
                             logging.info(f"[continuous] Event change relationship snapshot recorded at turn {i}")
                         except Exception as e:
@@ -746,7 +746,38 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
             except Exception as e:
                 logging.warning(f"Failed to compute intra-session relationships at turn {i}: {e}")
 
-        # （変更）ターン開始時の内省は行わない
+        # --- 発話直前に、発話者自身の関係値を内省 ---
+        # 現在の発話者が相手に対して持つ関係値を更新してから発話する
+        if args.relationship_reflection and args.relationship_reflection_every_turn and i > 0:
+            try:
+                # 現在の発話者: curr_speaker == 0 なら A、1 なら B
+                current_is_a = (curr_speaker == 0)
+                target = 'a' if current_is_a else 'b'
+                rr_current = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target=target, session_dialog=session, prev_relationship=current_relationship_reflection, turn_idx=i)
+                # 発話者の関係値を更新
+                if current_is_a:
+                    current_relationship_reflection['a_to_b'] = rr_current.get('a_to_b', current_relationship_reflection['a_to_b'])
+                    current_relationship_reflection['by_speaker'][agent_a['name']] = rr_current.get('by_speaker', {}).get(agent_a['name'], current_relationship_reflection['by_speaker'][agent_a['name']])
+                else:
+                    current_relationship_reflection['b_to_a'] = rr_current.get('b_to_a', current_relationship_reflection['b_to_a'])
+                    current_relationship_reflection['by_speaker'][agent_b['name']] = rr_current.get('by_speaker', {}).get(agent_b['name'], current_relationship_reflection['by_speaker'][agent_b['name']])
+                turns_key = f'session_{curr_sess_id}_relationship_reflection_turns'
+                injected = not getattr(args, 'relationship_reflection_no_inject', False)
+                entry_pre = {'turn': i, 'rr': rr_current, 'phase': 'before_generation', 'speaker': agent_a['name'] if current_is_a else agent_b['name'], 'time': datetime.utcnow().isoformat(), 'injected': injected}
+                agent_a.setdefault(turns_key, []).append(entry_pre)
+                agent_b.setdefault(turns_key, []).append(entry_pre)
+                save_agents([agent_a, agent_b], args)
+                # ログ出力
+                target_vec = rr_current.get('a_to_b' if current_is_a else 'b_to_a', {})
+                intimacy = target_vec.get('Intimacy', '?')
+                power = target_vec.get('Power', '?')
+                task_oriented = target_vec.get('TaskOriented', '?')
+                inject_label = '' if injected else ' [NOT INJECTED]'
+                logging.info(
+                    f"[rr/pre] turn={i} speaker {entry_pre['speaker']} reflected before utterance: Power={power}, Intimacy={intimacy}, TaskOriented={task_oriented}{inject_label}"
+                )
+            except Exception as _e:
+                logging.warning(f"relationship_reflection pre-turn failed at turn {i}: {_e}")
 
         if curr_speaker == 0:
             # Memory retrieval for Agent A's turn
@@ -1046,43 +1077,9 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         conv_so_far += f"\n{agent_b['name']}: " if curr_speaker == 0 else f"\n{agent_a['name']}: "
         curr_speaker = int(not curr_speaker)
 
-        # --- After the utterance, compute relationship_reflection for the next speaker ---
-        # NOTE: This must run BEFORE the break to ensure relationship values are updated each turn
-        if args.relationship_reflection and args.relationship_reflection_every_turn:
-            try:
-                # Save the session so far (including this utterance)
-                agent_a[f'session_{curr_sess_id}'] = session
-                agent_b[f'session_{curr_sess_id}'] = session
-                # Next speaker: curr_speaker has been toggled already above
-                next_is_a = (curr_speaker == 0)
-                target = 'a' if next_is_a else 'b'
-                rr_next = get_relationship_reflection(args, agent_a, agent_b, curr_sess_id, target=target, session_dialog=session)
-                # Merge into current snapshot, preserving the opposite direction
-                if next_is_a:
-                    current_relationship_reflection['a_to_b'] = rr_next.get('a_to_b', current_relationship_reflection['a_to_b'])
-                    current_relationship_reflection['by_speaker'][agent_a['name']] = rr_next.get('by_speaker', {}).get(agent_a['name'], current_relationship_reflection['by_speaker'][agent_a['name']])
-                else:
-                    current_relationship_reflection['b_to_a'] = rr_next.get('b_to_a', current_relationship_reflection['b_to_a'])
-                    current_relationship_reflection['by_speaker'][agent_b['name']] = rr_next.get('by_speaker', {}).get(agent_b['name'], current_relationship_reflection['by_speaker'][agent_b['name']])
-                turns_key = f'session_{curr_sess_id}_relationship_reflection_turns'
-                injected = not getattr(args, 'relationship_reflection_no_inject', False)
-                entry_post = {'turn': i, 'rr': rr_next, 'phase': 'after_generation', 'next_speaker': agent_a['name'] if next_is_a else agent_b['name'], 'time': datetime.utcnow().isoformat(), 'injected': injected}
-                agent_a.setdefault(turns_key, []).append(entry_post)
-                agent_b.setdefault(turns_key, []).append(entry_post)
-                save_agents([agent_a, agent_b], args)
-                # backward compatibility for logging values
-                target_vec = rr_next.get('a_to_b' if next_is_a else 'b_to_a', {})
-                intimacy = target_vec.get('Intimacy', target_vec.get('Politeness', target_vec.get('attentiveness','?')))
-                power = target_vec.get('Power', target_vec.get('Self-Disclosure', target_vec.get('positivity','?')))
-                task_oriented = target_vec.get('TaskOriented', target_vec.get('GoalOrientation', '?'))
-                inject_label = '' if injected else ' [NOT INJECTED]'
-                logging.info(
-                    f"[rr/post] turn={i} updated for next speaker {entry_post['next_speaker']}: Power={power}, Intimacy={intimacy}, TaskOriented={task_oriented}{inject_label}"
-                )
-            except Exception as _e:
-                logging.warning(f"relationship_reflection post-turn failed at turn {i}: {_e}")
+        # （変更）発話後の関係値計算は削除 - 発話直前に発話者自身が内省する方式に変更
 
-        # 強制的に exact-turns で終了 (関係値内省の後に配置)
+        # 強制的に exact-turns で終了
         if args.exact_turns_per_session is not None and (i+1) >= args.exact_turns_per_session:
             break
 
@@ -1331,7 +1328,26 @@ def main():
         # Final relationship_reflection snapshot per session (independent)
         if args.relationship_reflection and (('session_%s_relationship_reflection' % j not in agent_a) or args.overwrite_session):
                 try:
-                    rr_final = get_relationship_reflection(args, agent_a, agent_b, j, target='both')
+                    # 前回の関係値を取得（このセッションのターン履歴から最後の値、または前のセッションから）
+                    prev_rr_final = None
+                    turns_key = f'session_{j}_relationship_reflection_turns'
+                    if turns_key in agent_a and agent_a[turns_key]:
+                        # 最後のターンの関係値を使用
+                        last_turn_entry = agent_a[turns_key][-1]
+                        if 'rr' in last_turn_entry:
+                            prev_rr_final = last_turn_entry['rr']
+                    if not prev_rr_final and j > 1:
+                        # 前のセッションの最終関係値を使用
+                        prev_rr_final = agent_a.get(f'session_{j-1}_relationship_reflection')
+                    if not prev_rr_final:
+                        # 初期関係値を使用
+                        initial_rel = getattr(args, 'initial_relationship', None)
+                        if initial_rel and isinstance(initial_rel, dict):
+                            prev_rr_final = {
+                                'a_to_b': initial_rel.get('agent_a_to_b', {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}),
+                                'b_to_a': initial_rel.get('agent_b_to_a', {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0})
+                            }
+                    rr_final = get_relationship_reflection(args, agent_a, agent_b, j, target='both', prev_relationship=prev_rr_final)
                     agent_a['session_%s_relationship_reflection' % j] = rr_final
                     agent_b['session_%s_relationship_reflection' % j] = rr_final
                     save_agents([agent_a, agent_b], args)
