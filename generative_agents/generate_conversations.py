@@ -68,6 +68,7 @@ def parse_args():
     parser.add_argument('--reflection-evidence-topk', type=int, default=10, help='Number of recent memory entries to use as evidence candidates for relationship reflection')  # 関係性内省のエビデンス候補数
     parser.add_argument('--min-turns-before-stop', type=int, default=6, help='Do not include stop instruction until at least this turn index (0-based)')  # 終了指示[END]を入れ始める最小ターン
     parser.add_argument('--exact-turns-per-session', type=int, default=None, help='この値が指定された場合、セッションはちょうどNターン生成される。N-1ターンまでは[END]を出力させない（ストップ指示無効化）')  # ちょうどNターン生成
+    parser.add_argument('--history-turns', type=int, default=None, help='プロンプトに含める会話履歴のターン数を制限（Noneで無制限）')  # 履歴ターン数制限
     parser.add_argument('--device', type=str, default='auto', choices=['auto','cpu','cuda','mps'], help='Device for BLIP model (auto: prefer cuda > mps > cpu)')  # 無効: 画像系モデルのデバイス
     parser.add_argument('--image-search', action='store_true', help='(Disabled) image retrieval removed')  # 無効: 旧画像検索
     parser.add_argument('--lang', type=str, default='en', choices=['en','ja'], help='Conversation language (default en)')  # 会話の出力言語
@@ -150,6 +151,7 @@ def load_scenario_file(args):
         'reflection_every_turn': ('reflection_every_turn', _to_bool),
         'facts': ('facts', _to_bool),
         'summary': ('summary', _to_bool),
+        'history_turns': ('history_turns', int),
     }
     
     for scenario_key, (arg_attr, converter) in setting_mappings.items():
@@ -433,9 +435,9 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                     speaker_1['name'], speaker_2['name'], 
                     curr_sess_date_time, speaker_1['name'],  events, speaker_1['name'], speaker_2['name'], stop_instruction if instruct_stop else '')
         else:
-            query = AGENT_CONV_PROMPT_SESS_1 % (speaker_1['persona_summary'],
-                                speaker_1['name'], speaker_2['name'], 
-                                curr_sess_date_time, speaker_1['name'],  speaker_2['name'], speaker_1['name'])
+            query = AGENT_CONV_PROMPT_SESS_1 % (speaker_1['name'], speaker_2['name'], 
+                                speaker_1['name'], speaker_2['name'],
+                                speaker_1['persona_summary'], speaker_1['name'])
     
     else:
         if use_events:
@@ -462,15 +464,17 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
     
     if language == 'ja':
         # 会話を日本語で行う指示を最後に追加（人物名やイベント文字列は原文保持）
-        query += "\n\n出力は必ず自然でカジュアルな日本語で、1発話のみ。括弧内の [END] 指示があればそのトークンも含めて出力の末尾に付与してください。英語は使わないでください。"
+        query += "\n\n括弧内の [END] 指示があればそのトークンも含めて出力の末尾に付与してください。英語は使わないでください。"
         # メタ応答防止: 「〜と聞かれたことに対する返信」のような説明文を禁止
         query += "\nメタな説明（例:『〜と聞かれたことに対する返信』）は書かず、自然な発話の本文だけを出力してください。"
     # Optional: conversation topic guidance
     if topic:
         if language == 'ja':
-            query += f"\n\n会話のテーマ: {topic}\n"
+            query += f"\n\n【現在の状況】\n{topic}\n"
+            query += "この状況を踏まえて、新しい話題や感情の変化を会話に反映させてください。同じパターンの発話を繰り返さず、状況に応じた自然な進展を見せてください。\n"
         else:
-            query += f"\n\nConversation theme: {topic}\nStick to this theme naturally. Avoid repetition and reply with a single, natural utterance that responds to your partner."
+            query += f"\n\n【Current Situation】\n{topic}\n"
+            query += "Reflect this situation in your response. Avoid repeating the same patterns and show natural progression based on the current context.\n"
     # If memory snippet is provided (memory stream retrieval), append it
     if memory_snippet:
         try:
@@ -522,7 +526,10 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
             rr_snip = '\n\nRelationship reflection (7-point -3..+3):\n'
             rr_snip += f"{speaker_1['name']} -> {speaker_2['name']}: " + _fmt2(v12) + '\n'
             if language == 'ja':
-                rr_snip += '数値は -3(低)〜+3(高) で、Intimacy（親密度）：相手に対して感じる近しさ・好意の度合い。高いほど親しい ・Power（力関係）：対話主体が相手に対して主観的に認知している社会的・個人的な力関係を指す ・TaskOriented: タスク指向対話（やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的）であることを表しています。この値を参考に、発話スタイルを調整してください。\n'
+                rr_snip += '【数値の発話への反映ガイド】\n'
+                rr_snip += 'Intimacy（親密度）-3〜+3: -3〜-1は敬語や距離感のある言い方（ただし必要な情報は簡潔に伝える）、0は普通の会話トーン、+1〜+3は砕けた言い方・冗談・感情の共有が増える\n'
+                rr_snip += 'Power（力関係）-3〜+3: -3〜-1は相手を立てる言い方（ただしタスク遂行時は実務的に対応可能）、0は対等な立場での会話、+1〜+3は主導権を握る言い方・指示・提案が増える\n'
+                rr_snip += 'TaskOriented（タスク志向）-3〜+3: -3〜-1は雑談・感情共有・関係構築が中心、0はバランス型、+1〜+3は目的達成優先で感情表現より情報伝達・行動提案を重視\n'
             else:
                 rr_snip += 'Use this to adjust intimacy, power, and task orientation (-3 low .. +3 high).\n'
             query += rr_snip
@@ -532,7 +539,7 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
     # 直前の発話をプロンプトに含める
     if last_dialog:
         if language == 'ja':
-            query += f"\n\n相手の直前の発話:\n{last_dialog}\n\nこれに対して自然に返答してください。"
+            query += f"\n\n相手の直前の発話:\n{last_dialog}\n\nこれに対してに返答してください。"
         else:
             query += f"\n\nPartner's last utterance:\n{last_dialog}\n\nRespond naturally to this."
     
@@ -710,7 +717,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                         'turn': i,
                         'event_idx': current_event_idx,
                         'type': event_type,
-                        'description': new_topic
+                        'description': current_event.get('description', '')
                     })
                     
                     # トピックを更新
@@ -854,8 +861,26 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         # 画像関連機能無効化 (placeholder)
         # if args.image_search ...
 
-        # 発話生成用の完全なプロンプトを構築 
-        full_prompt = agent_query + conv_so_far
+        # 発話生成用の完全なプロンプトを構築
+        # 履歴ターン数を制限する場合は、conv_so_far から直近N発話のみ抽出
+        if getattr(args, 'history_turns', None) is not None and args.history_turns >= 0:
+            # conv_so_far は "Name1: text\nName2: " のような形式で蓄積されている
+            # 直近N発話 + 次の発話者プレフィックスを抽出
+            lines = conv_so_far.strip().split('\n')
+            # 最後の行が次の発話者プレフィックス（末尾が ': ' または ':' で終わる）かどうか確認
+            next_speaker_prefix = ''
+            if lines and (lines[-1].endswith(': ') or lines[-1].endswith(':')):
+                next_speaker_prefix = lines[-1]
+                lines = lines[:-1]
+            # 直近N発話を取得
+            recent_lines = lines[-args.history_turns:] if args.history_turns > 0 else []
+            conv_history = '\n'.join(recent_lines)
+            if conv_history:
+                conv_history += '\n'
+            conv_history += next_speaker_prefix
+            full_prompt = agent_query + conv_history
+        else:
+            full_prompt = agent_query + conv_so_far
         
         # トークン上限を拡大（Gemini 2.5 thinking対応で1000トークンに増加）
         raw = run_chatgpt(full_prompt, 1, 1000, 'chatgpt', temperature=1.2)
@@ -879,9 +904,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
         output["dia_id"] = f'D{curr_sess_id}:{i+1}'
         # 各ターンのリトリーブ結果（テキスト配列）を保存（エクスポート用）
         output["retrieved"] = retrieved_texts_for_turn or []
-        # 発話生成に使用したプロンプトを記録（agent_queryのみ、会話履歴全体は含めない）
-        # agent_query には last_dialog として直前の発話が含まれている
-        output["generation_prompt"] = agent_query
+        # 発話生成に使用したプロンプトを記録（会話履歴を含む完全なプロンプト）
+        output["generation_prompt"] = full_prompt
         # 現在のイベント情報を記録
         if current_event:
             output["current_event"] = {

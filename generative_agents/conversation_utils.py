@@ -17,16 +17,33 @@ PERSONA_FROM_MSC_PROMPT = (
 EVENT2QUERY_PROMPT = "Let's write short image search queries in order to find a suitable image for illustrating the given events. Queries should not include names of people, years and other irrelevant details. For example:\n\nInput: A picture of the modern art museum he visited with his grandchildren in Paris in 2018.\nOutput: modern art museum in Paris\n\nInput: A picture of the shared room she and her siblings lived in when she was growing up.\nOutput: cramped room with multiple beds\n\nInput: A photo of the new art supplies Jeremy bought for his upcoming art project with his mentor.\nOutput: new art supplies on a table\n\nInput: A picture of the delicious homemade vegetable smoothie she prepared using fresh produce from her well-organized garden, which she loves to maintain every morning.\n Output: produce garden at home\n\nWrite search queries for the following inputs.\n\n%s\n\nWrite answers in the form of a json list, where each entry is a query."
 
 #最初の発話の際にエージェントに投げるプロンプト
-AGENT_CONV_PROMPT_SESS_1 = "%s\n\n%s は %s と会話します。今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な一言を書いてください。\n\n指示:\n- 会話を始める場合は挨拶や近況を尋ねてください\n- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください\n- 返答は短く自然な一文（20語相当以内）で書いてください\n- 同じ話題や情報を繰り返さないでください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT_SESS_1 = """%s は %s と会話します。あなたは %s になりきり、%s に対して次に言う自然な発話を行なってください。
 
-AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """
-あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+【キャラクター情報】
+%s
 
 指示:
-- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
+- 関係値の指示を反映し、それに応じた発話スタイルにしてください
+- キャラクター情報を参考とし、関係値が示す態度を優先してください
+- 返答は1〜3文程度で、感情や思考が伝わる自然な発話にしてください
+- 同じ話題やパターンの発話を繰り返さず、会話を進めてください
+
+会話を終えるときは [END] と書いてください。
+
+%s:
+
+CONVERSATION:
+
+"""
+
+AGENT_CONV_PROMPT_SESS_1_W_EVENTS = """
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な発話を返してください。
+
+指示:
+- キャラクターの基本性格を土台にしつつ、状況や関係値の変化に応じて態度を調整してください
 - 相手の発言の内容や文脈に沿って自然に応答してください
-- 返答は短く自然な一文（20語相当以内）で書いてください
-- 同じ話題や情報を繰り返さないでください
+- 返答は1〜3文程度で、感情や思考が伝わるようにしてください
+- 同じ話題やパターンの発話を繰り返さず、会話を前に進めてください
 - 必要に応じて EVENTS の内容を会話に活かしてください
 
 PERSONALITY: %s
@@ -34,21 +51,21 @@ PERSONALITY: %s
 %s は %s と会話します。今日は %s です。%s の人生で以下の出来事が起きました。
 EVENTS: %s
 
-あなたは %s になりきり、%s との会話で次に言う自然な一言を書いてください。%s
+あなたは %s になりきり、%s との会話で次に言う自然な発話を書いてください。%s
 """
 
 
-AGENT_CONV_PROMPT = "%s\n\n%s は %s と %s に最後に話しました。%s\n\n今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な一言を書いてください。\n\n指示:\n- 相手の発言に自然に応答してください\n- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください\n- 返答は短く自然な一文（20語相当以内）で書いてください\n- 同じ話題や情報を繰り返さないでください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
+AGENT_CONV_PROMPT = "%s\n\n%s は %s と %s に最後に話しました。%s\n\n今日は %s です。あなたは %s になりきり、%s に対して次に言う自然な発話を書いてください。\n\n指示:\n- キャラクターの基本性格を土台にしつつ、状況や関係値の変化に応じて態度を調整してください\n- 返答は1から3文程度。（30~50語相当以内）で書いてください\n- 同じ話題やパターンの発話を繰り返さず、会話を前に進めてください\n\n会話を終えるときは [END] と書いてください。\n\n%s:\n\nCONVERSATION:\n\n"
 
-
+# エージェントの会話プロンプト（出来事あり）
 AGENT_CONV_PROMPT_W_EVENTS = """
-あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な発話を返してください。
 
 指示:
-- あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
+- キャラクターの基本性格を土台にしつつ、状況や関係値の変化に応じて態度を調整してください
 - 相手の発言の内容や文脈に沿って自然に応答してください
-- 返答は短く自然な一文（20語相当以内）で書いてください
-- 同じ話題や情報を繰り返さないでください
+- 返答は1〜3文程度で、感情や思考が伝わるようにしてください
+- 同じ話題やパターンの発話を繰り返さず、会話を前に進めてください
 - 必要に応じて EVENTS の内容を会話に活かしてください
 
 PERSONALITY: %s
@@ -60,17 +77,17 @@ PERSONALITY: %s
 今日は %s です。あなたは %s です。前回この相手に会ってから、あなたの人生で以下の出来事が起きました:
 %s
 
-%s あなたの PERSONALITY に沿って、%s との会話で次に言う自然な一言を書いてください:
+%s あなたの PERSONALITY に沿って、%s との会話で次に言う自然な発話を書いてください:
 """
 
 
 AGENT_CONV_PROMPT_W_EVENTS_V2_INIT = """
-あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な発話を返してください。
 
 指示:
 - あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
 - 相手の発言の内容や文脈に沿って自然に応答してください
-- 返答は短く自然な一文（20語相当以内）で書いてください
+- 返答は1〜3文程度で、感情や思考が伝わるようにしてください
 - 同じ話題や情報を繰り返さないでください
 - 必要に応じて EVENTS や SUMMARY の内容を会話に活かしてください
 
@@ -86,17 +103,17 @@ SUMMARY:
 EVENTS:
 %s
 
-%s あなたと %s の会話で、次に言う自然な一言を書いてください:
+%s あなたと %s の会話で、次に言う自然な発話を書いてください:
 """
 
 
 AGENT_CONV_PROMPT_W_EVENTS_V2 = """
-あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な一言を返してください。
+あなたは以下の PERSONALITY を持つキャラクターです。相手の発言に対して自然な発話を返してください。
 
 指示:
 - あなたのキャラクター（性格・立場・話し方）を一貫して保ってください
 - 相手の発言の内容や文脈に沿って自然に応答してください
-- 返答は短く自然な一文（20語相当以内）で書いてください
+- 返答は1〜3文程度で、感情や思考が伝わるようにしてください
 - 同じ話題や情報を繰り返さないでください
 - 必要に応じて EVENTS, SUMMARY, RELEVANT_CONTEXT の内容を会話に活かしてください
 
@@ -116,7 +133,7 @@ EVENTS:
 RELEVANT_CONTEXT:
 %s
 
-%s あなたと %s の会話で、次に言う自然な一言を書いてください:
+%s あなたと %s の会話で、次に言う自然な発話を書いてください:
 """
 
 

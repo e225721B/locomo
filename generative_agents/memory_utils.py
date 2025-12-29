@@ -60,13 +60,18 @@ HL_QUESTIONS_PROMPT_JA = (
     "- 表面的な言葉遣いだけでなく、行動や態度の変化に注目する\n"
     "- 前回からの関係性の変化を検出できる質問にする\n\n"
     
-    "【3つの次元】\n"
-    "1. Power（力関係）: 自分が相手に対してどれだけ影響力を持っていると感じるか\n"
+    "【3つの次元と発話への反映ガイド】\n"
+    "1. Power（力関係）-3〜+3: 自分が相手に対してどれだけ影響力を持っていると感じるか\n"
+    "   -3〜-1は相手を立てる言い方（ただしタスク遂行時は実務的に対応可能）、0は対等、+1〜+3は主導権を握る\n"
     "   質問例: 相手への指示や命令はありましたか？ / どちらが主導権を握っていますか？\n"
-    "2. Intimacy（親密度）: 相手との心理的な距離感・関わりの深さ\n"
+    "2. Intimacy（親密度）-3〜+3: 相手との心理的な距離感・関わりの深さ\n"
+    "   -3〜-1は敬語や距離感のある言い方（ただし必要な情報は簡潔に伝える）、0は普通、+1〜+3は砕けた言い方\n"
     "   質問例: 相手は自分に関心を持っていますか？ / 以前より態度が軟化していますか？\n"
-    "3. TaskOriented（タスク指向）: 目的達成志向か、関係構築志向か\n"
+    "3. TaskOriented（タスク指向）-3〜+3: 目的達成志向か、関係構築志向か\n"
+    "   -3〜-1は雑談・感情共有中心、0はバランス型、+1〜+3は情報伝達・行動提案を重視\n"
     "   質問例: 具体的な問題解決が話題の中心ですか？\n\n"
+    
+    "【重要】TaskOrientedが高い(+2以上)場合、IntimacyやPowerの影響よりタスク遂行を優先した実務的な発話を心がけてください。\n\n"
     
     "各質問は【簡潔に（30文字程度）】、それぞれの次元を評価するのに役立つものにしてください。\n"
     "出力は JSON 配列（要素は文字列）『のみ』で、ちょうど3件返してください。余計な文章は書かないでください。\n\n直近メモリ:\n{mems}\n"
@@ -132,18 +137,26 @@ RELN_REFLECT_PROMPT_SPLIT_JA = (
 
     "【前回の関係値】\n"
     "{prev_relationship_block}\n\n"
-    "【Power（力関係）】\n"
-    "評価基準: {src} が {dst} に対して主観的に認知している社会的・個人的な力関係を指す。\n"
+
+    "【Power（力関係）】-3〜+3\n"
+    "評価基準: {src} が {dst} に対して主観的に認知している社会的・個人的な力関係。\n"
+    "発話への反映: -3〜-1は相手を立てる言い方（ただしタスク遂行時は実務的に対応可能）、0は対等、+1〜+3は主導権を握る言い方・指示が増える\n"
     "質問: {q_power}\n"
     "根拠:\n{evid_power}\n\n"
-    "【Intimacy（親密度）】\n"
+
+    "【Intimacy（親密度）】-3〜+3\n"
     "評価基準: {src} が {dst} に対して感じる近しさ・好意の度合い。高いほど親しい。\n"
+    "発話への反映: -3〜-1は敬語や距離感のある言い方（ただし必要な情報は簡潔に伝える）、0は普通、+1〜+3は砕けた言い方・冗談・感情共有が増える\n"
     "質問: {q_intimacy}\n"
     "根拠:\n{evid_intimacy}\n\n"
-    "【TaskOriented（タスク指向対話）】\n"
+
+    "【TaskOriented（タスク指向対話）】-3〜+3\n"
     "評価基準: やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的。\n"
+    "発話への反映: -3〜-1は雑談・感情共有が中心、0はバランス型、+1〜+3は情報伝達・行動提案を重視\n"
+    "【重要】TaskOrientedが+2以上の場合、IntimacyやPowerの影響よりタスク遂行を優先した実務的な発話になる\n"
     "質問: {q_task}\n"
     "根拠:\n{evid_task}\n\n"
+
     "前回の関係値を参考にしつつ、今回の根拠に基づいて新たな関係値を判断してください。\n"
     "出力は JSON オブジェクトのみ（英語キー名厳守）: {{\"Power\":-3..+3,\"Intimacy\":-3..+3,\"TaskOriented\":-3..+3}}。JSON 以外の文章は書かないでください。\n"
 )
@@ -841,6 +854,16 @@ def get_relationship_reflection(args, agent_a, agent_b, session_idx, target: str
     
     if dialog_count < min_turns_required:
         logging.info(f"[rr] Skipping relationship_reflection: only {dialog_count} turns (min {min_turns_required} required)")
+        # スキップする場合は前回の関係値をそのまま返す（初期値を保持）
+        if prev_relationship and isinstance(prev_relationship, dict):
+            return {
+                'a_to_b': prev_relationship.get('a_to_b', {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}),
+                'b_to_a': prev_relationship.get('b_to_a', {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}),
+                'by_speaker': prev_relationship.get('by_speaker', {
+                    agent_a['name']: {'toward': agent_b['name'], 'vector': {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}},
+                    agent_b['name']: {'toward': agent_a['name'], 'vector': {'Power': 0, 'Intimacy': 0, 'TaskOriented': 0}}
+                })
+            }
         return _zero_result()
 
     def _embed_list(texts: List[str]):
