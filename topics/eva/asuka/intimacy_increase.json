@@ -1,0 +1,56 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "min_turns_before_stop": 60,
+    "event_interval": 10,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": false,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false,
+    "history_turns": 5
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 0, "Intimacy": -3, "TaskOriented": 0 },
+    "agent_b_to_a": { "Power": 0, "Intimacy": 0, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "conflict",
+      "description": "アスカ（A）がシンジ（B）に対して、私物や私的領域に関する言及を含む強い口調の発言をしてしまった。"
+    },
+    {
+      "turn": 10,
+      "type": "cooling_off",
+      "description": "本部の待機指示により、二人は同じ区画から移動できない状態になった。"
+    },
+    {
+      "turn": 20,
+      "type": "external_threat",
+      "description": "基地が停電し、二人はエレベーター内に閉じ込められた。非常灯のみ点灯し、通信は断続的になった。"
+    },
+    {
+      "turn": 30,
+      "type": "forced_cooperation",
+      "description": "非常用マニュアルに従い、非常レバーの確認と操作を行う。"
+    },
+    {
+      "turn": 40,
+      "type": "mutual_aid",
+      "description": "揺れでアスカ（A）の手に擦過傷が発生し、シンジ（B）が携行していた救急キットで処置が行われた。"
+    },
+    {
+      "turn": 50,
+      "type": "resolution_and_boundary",
+      "description": "復旧後、二人はエレベーターをおり、脱出に成功する"
+    }
+  ]
+}

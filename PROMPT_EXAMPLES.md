@@ -431,3 +431,132 @@ CONVERSATION:
 ```
 [rr/post] turn=3 updated for next speaker 山田花子: Power=-1, Intimacy=2, TaskOriented=0
 ```
+
+---
+
+## 内省と発話の詳細フロー
+
+以下は、1 ターンの処理における内省と発話生成の詳細な流れです。
+
+### ターン処理の全体フロー
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ターン i の処理フロー                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. イベント切り替えチェック
+   ├─ 次のイベントの turn に到達したか確認
+   ├─ 到達していれば session_topic を更新
+   └─ イベント切り替え時に関係値スナップショットを記録
+
+2. 発話直前の関係値内省
+   ├─ 条件: --relationship-reflection AND --relationship-reflection-every-turn AND i > 0
+   ├─ 現在の発話者（A or B）の相手への関係値を計算
+   │   └─ get_relationship_reflection(target='a' or 'b', prev_relationship=...)
+   ├─ current_relationship_reflection を更新
+   │   └─ 発話者の方向のみ更新（a_to_b または b_to_a）
+   └─ ログ出力: "[rr/pre] turn=X speaker Y reflected before utterance"
+
+3. メモリ検索
+   ├─ 直前の相手の発話をクエリとして使用
+   ├─ mem_a.retrieve() または mem_b.retrieve() で上位k件取得
+   └─ --memory-retrieve-inject が有効なら mem_snip を生成
+
+4. 発話生成プロンプト構築
+   ├─ get_agent_query() を呼び出し
+   │   ├─ speaker_1: 発話者のペルソナ
+   │   ├─ speaker_2: 相手のペルソナ
+   │   ├─ topic: session_topic（現在のイベント description）
+   │   ├─ memory_snippet: リトリーブ結果（有効時のみ）
+   │   └─ relationship_reflection: current_relationship_reflection
+   └─ プロンプトに注入される情報:
+       ├─ ペルソナ
+       ├─ 会話テーマ（イベント description）
+       ├─ 関係値（Intimacy, Power, TaskOriented）
+       └─ 直前の発話
+
+5. 発話生成
+   ├─ full_prompt = agent_query + conv_so_far
+   └─ run_chatgpt(full_prompt, temperature=1.2)
+
+6. 発話結果の保存
+   ├─ session.append(output)
+   └─ output に以下を含む:
+       ├─ speaker, clean_text, dia_id
+       ├─ retrieved: 検索結果
+       ├─ current_event: イベント情報
+       └─ relationship_reflection_used: 使用された関係値
+
+7. 次のターンへ
+   └─ curr_speaker = 1 - curr_speaker （話者交代）
+```
+
+### 関係値内省の詳細フロー
+
+```
+get_relationship_reflection() の処理
+│
+├─ 1. HLQ（高レベル質問）生成
+│   ├─ 直近メモリから3つの質問を生成
+│   │   1. Power用の質問
+│   │   2. Intimacy用の質問
+│   │   3. TaskOriented用の質問
+│   └─ 例: ["どちらが主導権を握っていますか？", "相手への共感がありますか？", "目的達成志向ですか？"]
+│
+├─ 2. エビデンス抽出
+│   ├─ 各質問に対して関連する会話を抽出
+│   └─ 例: "1. [アスカ] 黙ってなさいよ！\n2. [シンジ] ごめん..."
+│
+├─ 3. 関係値評価プロンプト構築
+│   └─ RELN_REFLECT_PROMPT_SPLIT_JA に以下を埋め込む:
+│       ├─ {src}: 評価主体（発話者）
+│       ├─ {dst}: 評価対象（相手）
+│       ├─ {prev_relationship_block}: 前回の関係値
+│       ├─ {q_power}, {q_intimacy}, {q_task}: 各次元の質問
+│       └─ {evid_power}, {evid_intimacy}, {evid_task}: 各次元のエビデンス
+│
+├─ 4. LLM呼び出し
+│   └─ JSON形式で関係値を取得: {"Power":X, "Intimacy":Y, "TaskOriented":Z}
+│
+└─ 5. 変化量制限
+    └─ 前回値から±1以内に制限（_clamp_change関数）
+```
+
+### 関係値が発話に影響する流れ
+
+```
+current_relationship_reflection (例)
+{
+  "a_to_b": {"Power": 3, "Intimacy": -3, "TaskOriented": -2},
+  "b_to_a": {"Power": -3, "Intimacy": -3, "TaskOriented": -2},
+  "by_speaker": {
+    "アスカ": {"toward": "シンジ", "vector": {"Power": 3, "Intimacy": -3, ...}},
+    "シンジ": {"toward": "アスカ", "vector": {"Power": -3, "Intimacy": -3, ...}}
+  }
+}
+    ↓
+発話生成プロンプトに注入
+    ↓
+"Relationship reflection (7-point -3..+3):
+アスカ -> シンジ: Intimacy=-3, Power=3, TaskOriented=-2
+数値は -3(低)〜+3(高) で、Intimacy（親密度）：相手に対して感じる近しさ...
+この値を参考に、発話スタイルを調整してください。"
+    ↓
+LLMがこの情報を参考に発話を生成
+（Intimacy=-3 なので冷たい態度で発話を生成）
+```
+
+### 現状の課題と循環依存
+
+| 問題                    | 原因                         | 影響                               |
+| ----------------------- | ---------------------------- | ---------------------------------- |
+| Intimacy が常に低いまま | 表面的な言葉遣いで評価       | 関係値が改善しない                 |
+| 発話が常にネガティブ    | Intimacy=-3 が発話生成に注入 | 会話が好転しない                   |
+| 循環依存                | 関係値 → 発話 → 関係値       | 一度ネガティブになると抜け出せない |
+
+**改善の方向性:**
+
+- 関係値評価で「相手の人物像」を推論し、発言の真意を解釈する
+- 表面的な言葉遣いではなく、行動や態度の変化に注目する
+- HLQ 生成で「前回からの変化を検出する質問」を生成する

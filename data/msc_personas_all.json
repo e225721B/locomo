@@ -2521,7 +2521,7 @@
         "I am originally from California.",
         "I visited Seattle once."
       ],
-      "in_dataset": 0
+      "in_dataset": 1
     },
     {
       "Speaker 1": [
@@ -46798,7 +46798,7 @@
         "I'm scared of snakes.",
         "I have never been close to a bear."
       ],
-      "in_dataset": 0
+      "in_dataset": 1
     },
     {
       "Speaker 1": [

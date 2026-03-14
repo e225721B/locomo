@@ -16,7 +16,7 @@ PERSONA_FROM_MSC_PROMPT = (
 
 EVENT2QUERY_PROMPT = "Let's write short image search queries in order to find a suitable image for illustrating the given events. Queries should not include names of people, years and other irrelevant details. For example:\n\nInput: A picture of the modern art museum he visited with his grandchildren in Paris in 2018.\nOutput: modern art museum in Paris\n\nInput: A picture of the shared room she and her siblings lived in when she was growing up.\nOutput: cramped room with multiple beds\n\nInput: A photo of the new art supplies Jeremy bought for his upcoming art project with his mentor.\nOutput: new art supplies on a table\n\nInput: A picture of the delicious homemade vegetable smoothie she prepared using fresh produce from her well-organized garden, which she loves to maintain every morning.\n Output: produce garden at home\n\nWrite search queries for the following inputs.\n\n%s\n\nWrite answers in the form of a json list, where each entry is a query."
 
-#最初の発話の際にエージェントに投げるプロンプト
+#発話の際にエージェントに投げるプロンプト
 AGENT_CONV_PROMPT_SESS_1 = """%s は %s と会話します。あなたは %s になりきり、%s に対して次に言う自然な発話を行なってください。
 
 【キャラクター情報】
@@ -25,6 +25,25 @@ AGENT_CONV_PROMPT_SESS_1 = """%s は %s と会話します。あなたは %s に
 指示:
 - 関係値の指示を反映し、それに応じた発話スタイルにしてください
 - キャラクター情報を参考とし、関係値が示す態度を優先してください
+- 返答は1〜3文程度で、感情や思考が伝わる自然な発話にしてください
+- 同じ話題やパターンの発話を繰り返さず、会話を進めてください
+
+会話を終えるときは [END] と書いてください。
+
+%s:
+
+CONVERSATION:
+
+"""
+
+# 関係値を注入しない場合のプロンプト（relationship_reflection_no_inject=true用）
+AGENT_CONV_PROMPT_SESS_1_NO_RR = """%s は %s と会話します。あなたは %s になりきり、%s に対して次に言う自然な発話を行なってください。
+
+【キャラクター情報】
+%s
+
+指示:
+- キャラクター情報を参考にして、自然な発話にしてください
 - 返答は1〜3文程度で、感情や思考が伝わる自然な発話にしてください
 - 同じ話題やパターンの発話を繰り返さず、会話を進めてください
 

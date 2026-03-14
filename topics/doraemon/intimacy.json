@@ -1,0 +1,34 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 40,
+    "max_turns_per_session": 100,
+    "event_interval": 20,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": true,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 2, "Intimacy": -3, "TaskOriented": 0 },
+    "agent_b_to_a": { "Power": -2, "Intimacy": -3, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "conflict",
+      "description": "ドラえもん（A）がのび太（B）の大切にしていた漫画を誤って捨ててしまった（と思い込んでいる）直後。のび太は激昂し、ドラえもんを拒絶。ドラえもんも売り言葉に買い言葉で応戦し、関係は最悪の状態。"
+    },
+    {
+      "turn": 20,
+      "type": "awkward_silence",
+      "description": "のび太（B）がふて腐れて座布団を放り投げると、その下から「捨てられたはずの漫画」が出てきた。実はのび太自身が読み終わった後に座布団の下に置き忘れていただけだった。捨てらられていたと思っていた誤解が解ける。"
+    }
+  ]
+}

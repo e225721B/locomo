@@ -27,13 +27,13 @@ def get_openai_embedding(texts, model: str = None):
 
     Args:
         texts (List[str]): 入力テキスト群
-        model (str, optional): 利用する埋め込みモデル (未指定時は環境変数 GEMINI_EMBED_MODEL → デフォルト models/text-embedding-004)
+        model (str, optional): 利用する埋め込みモデル (未指定時は環境変数 GEMINI_EMBED_MODEL → デフォルト models/gemini-embedding-001)
 
     Returns:
         np.ndarray: shape = (len(texts), embedding_dim)
     """
     if model is None:
-        model = os.environ.get("GEMINI_EMBED_MODEL", "models/text-embedding-004")
+        model = os.environ.get("GEMINI_EMBED_MODEL", "models/gemini-embedding-001")
 
     cleaned = [t.replace("\n", " ") if isinstance(t, str) else "" for t in texts]
     vectors = []
@@ -306,7 +306,7 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
         str | List[str]: num_gen=1 なら文字列、>1 なら文字列リストgemini-2.5-flash
     """
     # モデル名 (gemini-3-flash-preview: 高性能モデルを優先)
-    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+    gemini_default = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.0-flash")
     
     def _normalize_gemini_model_name(name: str) -> str:
         # SDK により "models/" プレフィックスの有無が異なるため吸収
@@ -327,7 +327,7 @@ def run_chatgpt(query, num_gen=1, num_tokens_request=1000,
     fallbacks = [
         _normalize_gemini_model_name(_LAST_GOOD_GEMINI_MODEL) if _LAST_GOOD_GEMINI_MODEL else None,
         primary,
-        _normalize_gemini_model_name("gemini-3-flash-preview"),
+        _normalize_gemini_model_name("gemini-2.5-flash"),
 
     ]
     # None を除去しつつ順序を保持したユニーク化

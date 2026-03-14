@@ -73,6 +73,7 @@ class MemoryStore:
     def save(self) -> None:
         self.agent['memory_stream'] = self.entries
 
+
     # ---------- add entries ----------
     #重要度計算
     def _score_importance(self, text: str) -> int:

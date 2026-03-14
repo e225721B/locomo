@@ -56,12 +56,12 @@ HL_QUESTIONS_PROMPT_EN = (
 HL_QUESTIONS_PROMPT_JA = (
     "次の直近のメモリ（会話・気づきを含む）のみを根拠として、以下の3つの関係性次元を観察するための高レベル質問を1つずつ作成してください:\n"
     "【重要な観点】\n"
-    "- 相手がどのような人物か（素直に表現するタイプか、照れ隠しで逆のことを言うタイプか等）を考慮する\n"
+    "- 相手がどのような人物か？を考慮する\n"
     "- 表面的な言葉遣いだけでなく、行動や態度の変化に注目する\n"
     "- 前回からの関係性の変化を検出できる質問にする\n\n"
     
-    "【3つの次元と発話への反映ガイド】\n"
-    "1. Power（力関係）-3〜+3: 自分が相手に対してどれだけ影響力を持っていると感じるか\n"
+    "【3つの次元ガイド】\n"
+    "1. Power（力関係）-3〜+3: 自分が相手に対してどれだけ影響力を持っていると感じるか？\n"
     "   -3〜-1は相手を立てる言い方（ただしタスク遂行時は実務的に対応可能）、0は対等、+1〜+3は主導権を握る\n"
     "   質問例: 相手への指示や命令はありましたか？ / どちらが主導権を握っていますか？\n"
     "2. Intimacy（親密度）-3〜+3: 相手との心理的な距離感・関わりの深さ\n"
@@ -131,9 +131,9 @@ RELATIONSHIP_ASSESS_PROMPT_JA = (
 RELN_REFLECT_PROMPT_SPLIT_JA = (
     "以下の3つの関係性次元について、それぞれに対応する質問と根拠に基づいて、{src} から {dst} への関係値を 7 段階（-3〜+3 の整数）で評価してください。\n\n"
     "【重要な観点】\n"
-    "- 相手がどのような人物か（素直に表現するタイプか、照れ隠しで逆のことを言うタイプか等）を考慮する\n"
+    "- 相手がどのような人物かを考慮する\n"
     "- 表面的な言葉遣いだけでなく、行動や態度の変化に注目する\n"
-    "- 前回からの関係性の変化を検出できる質問にする\n\n"
+    "- 前回からの関係性の変化を検出できる質問にしてください\n\n"
 
     "【前回の関係値】\n"
     "{prev_relationship_block}\n\n"
@@ -153,7 +153,6 @@ RELN_REFLECT_PROMPT_SPLIT_JA = (
     "【TaskOriented（タスク指向対話）】-3〜+3\n"
     "評価基準: やり取りがどれだけタスク指向か。高いほどタスク志向、低いほど雑談・社交的。\n"
     "発話への反映: -3〜-1は雑談・感情共有が中心、0はバランス型、+1〜+3は情報伝達・行動提案を重視\n"
-    "【重要】TaskOrientedが+2以上の場合、IntimacyやPowerの影響よりタスク遂行を優先した実務的な発話になる\n"
     "質問: {q_task}\n"
     "根拠:\n{evid_task}\n\n"
 
@@ -183,7 +182,7 @@ RELN_REFLECT_PROMPT_SPLIT_EN = (
 )
 
 
-RETRIEVAL_MODEL = os.environ.get("GEMINI_EMBED_MODEL", "models/text-embedding-004")
+RETRIEVAL_MODEL = os.environ.get("GEMINI_EMBED_MODEL", "models/gemini-embedding-001")
 
 def get_embedding(texts, model=None):
     return get_openai_embedding(texts, model or RETRIEVAL_MODEL)

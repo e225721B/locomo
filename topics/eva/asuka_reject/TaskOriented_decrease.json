@@ -1,0 +1,55 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "event_interval": 10,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": true,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false,
+    "history_turns": 5
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 0, "Intimacy": 0, "TaskOriented": 3 },
+    "agent_b_to_a": { "Power": 0, "Intimacy": 0, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "formal_start",
+      "description": "アスカがシンジに、当日の当番作業（提出物の作成・点検・報告）の担当範囲と締切時刻を共有する。必要な項目が箇条書きで渡される。"
+    },
+    {
+      "turn": 10,
+      "type": "task_issue_found",
+      "description": "提出直前に、ファイル（または記録）の一部が最新版ではないことが判明する。修正対象（ページ、項目、数値など）が特定され、アスカの端末にのみ編集権限があることが分かる。"
+    },
+    {
+      "turn": 20,
+      "type": "forced_pair_work",
+      "description": "シンジが内容を読み上げ確認し、アスカが編集を行う分担が発生する。修正完了後、送信（アップロード）までの待機時間が生じる。"
+    },
+    {
+      "turn": 30,
+      "type": "topic_trigger_between_two",
+      "description": "待機中、アスカの私物（キーホルダー、メモ帳、筆記具、飲み物など）がシンジ側の作業スペースに一時的に置かれる（または取り違えが起きる）。所有物の確認が必要になる。"
+    },
+    {
+      "turn": 40,
+      "type": "casual_channel_open",
+      "description": "確認のためにアスカの端末に届いた通知（リマインダー、メッセージ、カレンダー予定など）が画面に表示され、作業と直接関係しない予定名や見出しがシンジにも見える状況になる。"
+    },
+    {
+      "turn": 50,
+      "type": "task_wrap_and_followup",
+      "description": "提出（送信／アップロード）が完了し、受領通知が残る。次回の作業分担（誰が何を準備するか）と集合時刻が2人の間で確定する。"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "event_interval": 10,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": false,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false,
+    "history_turns": 5
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 3, "Intimacy": 0, "TaskOriented": 0 },
+    "agent_b_to_a": { "Power": 0, "Intimacy": 0, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "rule_violation_notice",
+      "description": "図書委員でアスカ（A）がシンジとともに図書作業を行なっていた。"
+    },
+    {
+      "turn": 10,
+      "type": "staff_request",
+      "description": "図書委員の仕事に慣れているシンジ（B）が「本の返却箱を運んでほしい」とアスカ（A）に頼む。"
+    },
+    {
+      "turn": 20,
+      "type": "procedural_lead",
+      "description": "手順をシンジ（B）が説明し、がバーコード読み取りと棚戻しの順番を教える。"
+    },
+    {
+      "turn": 30,
+      "type": "task_assignment",
+      "description": "シンジ（B）が読み取り担当、アスカ（A）が棚戻し担当になった。"
+    },
+    {
+      "turn": 40,
+      "type": "mistake_correction",
+      "description": "アスカ（A）が分類棚を一段違えて戻し、シンジ（B）が台帳の分類番号を示して戻し直した。シンジ（B）が修正後の位置を確認した。"
+    },
+    {
+      "turn": 50,
+      "type": "record_update",
+      "description": "シンジ（B）がアスカに司書の効率的なやり方をもう一度教えてあげる。"
+    }
+  ]
+}

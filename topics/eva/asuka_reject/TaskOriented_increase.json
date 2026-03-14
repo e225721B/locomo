@@ -1,0 +1,55 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "event_interval": 10,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": true,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false,
+    "history_turns": 5
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 0, "Intimacy": 0, "TaskOriented": -3 },
+    "agent_b_to_a": { "Power": 0, "Intimacy": 0, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "casual_start",
+      "description": "休憩スペースでアスカとシンジが同じテーブルに座り、飲み物や雑誌、スマホ画面などの私的なものが机上にある状態になる。"
+    },
+    {
+      "turn": 10,
+      "type": "light_interruption",
+      "description": "館内放送や端末通知で、当番作業（点検・記録・報告）のリマインドが一斉送信される。開始時刻が明記されている。"
+    },
+    {
+      "turn": 20,
+      "type": "responsibility_assignment",
+      "description": "担当者不在が判明し、アスカ（A）とシンジ（B）の2名が代行担当として指名される（メッセージまたは掲示で記録が残る）。作業場所と提出先が指定される。"
+    },
+    {
+      "turn": 30,
+      "type": "constraint_and_tools",
+      "description": "作業に必要な端末／鍵／権限のうち、アスカ（A）側にしかないもの（認証、カードキー、編集権限など）があることが分かる。手順書（チェックリスト）が配布される。"
+    },
+    {
+      "turn": 40,
+      "type": "time_pressure",
+      "description": "締切が前倒しされた旨の連絡が入り、残り時間が短いことが明確になる。提出形式（ファイル名、記録項目、添付物）が具体的に指定される。"
+    },
+    {
+      "turn": 50,
+      "type": "completion",
+      "description": "チェックリストの項目が埋まり、提出（送信／アップロード）が完了する。受領通知やログが残り、次回の当番予定が更新される。"
+    }
+  ]
+}

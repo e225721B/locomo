@@ -1,0 +1,56 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "max_turns_per_session": 100,
+    "min_turns_before_stop": 60,
+    "event_interval": 10,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": false,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false,
+    "history_turns": 5
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": 0, "Intimacy": 3, "TaskOriented": 0 },
+    "agent_b_to_a": { "Power": 0, "Intimacy": 0, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "bump",
+      "description": "教室で机がぶつかり、アスカ（A）のプリントが床に落ちた。"
+    },
+    {
+      "turn": 10,
+      "type": "mixup",
+      "description": "拾う途中で、アスカ（A）のプリント1枚がシンジ（B）のノートに挟まった。"
+    },
+    {
+      "turn": 20,
+      "type": "collection",
+      "description": "教師が提出物を回収し、アスカ（A）の分が1枚足りないと確認した。"
+    },
+    {
+      "turn": 30,
+      "type": "found",
+      "description": "不足分がシンジ（B）のノートから見つかり、教師が回収した。"
+    },
+    {
+      "turn": 40,
+      "type": "grouping",
+      "description": "同じ授業で班分けが行われ、二人は同じ班に指定された。"
+    },
+    {
+      "turn": 50,
+      "type": "spill",
+      "description": "シンジ（B）作業中にのりが倒れ、作業用紙が一部汚れた。"
+    }
+  ]
+}

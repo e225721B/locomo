@@ -421,7 +421,7 @@ def remove_context(args, curr_dialog, prev_dialog, caption=None):
 #毎ターンごとにエージェントに渡す情報
 def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                     prev_sess_date_time='', curr_sess_date_time='',
-                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None, topic=None, relationship_reflection=None):
+                    use_events=False, instruct_stop=False, dialog_id=0, last_dialog='', embeddings=None, reflection=False, language='en', relationships=None, memory_snippet=None, topic=None, relationship_reflection=None, relationship_reflection_no_inject=False):
 
     stop_instruction = "To end the conversation, write [END] at the end of the dialog."
     if instruct_stop:
@@ -435,9 +435,15 @@ def get_agent_query(speaker_1, speaker_2, curr_sess_id=0,
                     speaker_1['name'], speaker_2['name'], 
                     curr_sess_date_time, speaker_1['name'],  events, speaker_1['name'], speaker_2['name'], stop_instruction if instruct_stop else '')
         else:
-            query = AGENT_CONV_PROMPT_SESS_1 % (speaker_1['name'], speaker_2['name'], 
-                                speaker_1['name'], speaker_2['name'],
-                                speaker_1['persona_summary'], speaker_1['name'])
+            # 関係値を注入しない場合は、関係値指示なしのプロンプトを使用
+            if relationship_reflection_no_inject:
+                query = AGENT_CONV_PROMPT_SESS_1_NO_RR % (speaker_1['name'], speaker_2['name'], 
+                                    speaker_1['name'], speaker_2['name'],
+                                    speaker_1['persona_summary'], speaker_1['name'])
+            else:
+                query = AGENT_CONV_PROMPT_SESS_1 % (speaker_1['name'], speaker_2['name'], 
+                                    speaker_1['name'], speaker_2['name'],
+                                    speaker_1['persona_summary'], speaker_1['name'])
     
     else:
         if use_events:
@@ -805,6 +811,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     retrieved_texts_for_turn = []
             # relationship_reflection を注入するかどうか: --relationship-reflection-no-inject が指定されていれば None を渡す
             rr_for_prompt = None if getattr(args, 'relationship_reflection_no_inject', False) else current_relationship_reflection
+            rr_no_inject = getattr(args, 'relationship_reflection_no_inject', False)
             agent_query = get_agent_query(
                 agent_a, agent_b,
                 prev_sess_date_time=prev_date_time_string,
@@ -820,7 +827,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 relationships=current_relationships,
                 relationship_reflection=rr_for_prompt,
                 memory_snippet=mem_snip,
-                topic=session_topic
+                topic=session_topic,
+                relationship_reflection_no_inject=rr_no_inject
             )
             # （削除）詳細トレースは出力しない
         else:
@@ -839,6 +847,7 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                     retrieved_texts_for_turn = []
             # relationship_reflection を注入するかどうか: --relationship-reflection-no-inject が指定されていれば None を渡す
             rr_for_prompt = None if getattr(args, 'relationship_reflection_no_inject', False) else current_relationship_reflection
+            rr_no_inject = getattr(args, 'relationship_reflection_no_inject', False)
             agent_query = get_agent_query(
                 agent_b, agent_a,
                 prev_sess_date_time=prev_date_time_string,
@@ -854,7 +863,8 @@ def get_session(agent_a, agent_b, args, prev_date_time_string='', curr_date_time
                 relationships=current_relationships,
                 relationship_reflection=rr_for_prompt,
                 memory_snippet=mem_snip,
-                topic=session_topic
+                topic=session_topic,
+                relationship_reflection_no_inject=rr_no_inject
             )
             # （削除）詳細トレースは出力しない
 

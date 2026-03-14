@@ -1,0 +1,54 @@
+{
+  "mode": "continuous",
+  "settings": {
+    "lang": "ja",
+    "num_sessions": 1,
+    "total_turns": 60,
+    "event_interval": 10,
+    "memory_stream": true,
+    "relationship_reflection": true,
+    "relationship_reflection_every_turn": true,
+    "relationship_reflection_no_inject": false,
+    "reflection_evidence_topk": 3,
+    "memory_topk": 0,
+    "memory_retrieve_inject": false,
+    "reflection": false,
+    "history_turns": 5
+  },
+  "initial_relationship": {
+    "agent_a_to_b": { "Power": -3, "Intimacy": 0, "TaskOriented": 0 },
+    "agent_b_to_a": { "Power": 0, "Intimacy": 0, "TaskOriented": 0 }
+  },
+  "events": [
+    {
+      "turn": 0,
+      "type": "class_setup",
+      "description": "授業前、教室で実験準備が始まり、アスカ（A）とシンジ（B）が同じ班になった。"
+    },
+    {
+      "turn": 10,
+      "type": "teacher_assignment",
+      "description": "教師が班長をアスカ（A）に指定し、手順書とタイマーを渡した。"
+    },
+    {
+      "turn": 20,
+      "type": "instruction_delivery",
+      "description": "アスカ（A）が手順書を読み上げ、作業の順番と担当を決めた。"
+    },
+    {
+      "turn": 30,
+      "type": "execution_control",
+      "description": "実験中、アスカ（A）が「次はこれ」「今は待つ」と作業のタイミングを指示した。"
+    },
+    {
+      "turn": 40,
+      "type": "correction",
+      "description": "シンジ（B）が器具の向きを誤り、アスカ（A）が正しい向きを示して修正した。教師が修正後の状態を確認した。"
+    },
+    {
+      "turn": 50,
+      "type": "submission_credit",
+      "description": "提出前の最終チェックをアスカ（A）が行い、提出物の代表者欄にアスカ（A）の名前が記入された。"
+    }
+  ]
+}
